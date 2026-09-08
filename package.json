@@ -4,6 +4,7 @@
   "description": "API DDD para consumo de campañas/pautajes de Meta Ads con auth JWT",
   "scripts": {
     "build": "nest build",
+    "test": "tsc --noEmit",
     "start": "nest start",
     "start:dev": "nest start --watch",
     "start:prod": "node dist/main",

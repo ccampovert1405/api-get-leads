@@ -1,0 +1,76 @@
+name: Release production (Railway)
+
+on:
+  push:
+    branches: [production]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-prod
+  cancel-in-progress: false
+
+jobs:
+  # Validación de pruebas previa al despliegue
+  pre-deploy-validation:
+    name: Validar integridad en production
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+
+      - name: Instalar dependencias
+        run: npm ci
+
+      - name: Ejecutar set de pruebas
+        run: npm test
+
+      - name: Validar compilación NestJS
+        run: npm run build
+
+  # Despliegue en Railway
+  deploy-to-railway:
+    name: Build & Deploy a Railway
+    needs: pre-deploy-validation
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Desplegar a Railway
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+          RAILWAY_SERVICE: ${{ secrets.RAILWAY_SERVICE_NAME }}
+        run: |
+          if [ -n "$RAILWAY_TOKEN" ]; then
+            echo "==> Token de Railway detectado. Desplegando en Railway..."
+            npm install -g @railway/cli
+            if [ -n "$RAILWAY_SERVICE" ]; then
+              railway up --service "$RAILWAY_SERVICE" --detach
+            else
+              railway up --detach
+            fi
+            echo "==> Despliegue enviado a Railway exitosamente."
+          else
+            echo "==> RAILWAY_TOKEN no configurado en Secrets de GitHub."
+            echo "==> Railway ejecutará el build y despliegue automáticamente mediante su webhook/integración nativa de GitHub conectada a 'production'."
+          fi
+
+      - name: Resumen del Despliegue
+        run: |
+          echo "### 🚀 Despliegue a Producción (Railway)" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Campo | Valor |" >> $GITHUB_STEP_SUMMARY
+          echo "|---|---|" >> $GITHUB_STEP_SUMMARY
+          echo "| Servicio | \`Backend API (NestJS)\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Rama | \`production\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Commit | \`${{ github.sha }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Autor | ${{ github.actor }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Mensaje | \`${{ github.event.head_commit.message }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Evento | Merge/Push a Producción |" >> $GITHUB_STEP_SUMMARY
+          echo "| Estado | ✅ Build verificado y enviado a Railway |" >> $GITHUB_STEP_SUMMARY

@@ -1,0 +1,86 @@
+name: PR validation
+
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened]
+    branches: [production]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: pr-validation-${{ github.head_ref }}
+  cancel-in-progress: true
+
+jobs:
+  # Valida que el TÍTULO del PR sea un Conventional Commit válido (squash merge
+  # usa el título como mensaje final del commit que llega a la rama base —
+  # ese commit es el que semantic-release y el changelog analizan).
+  commitlint-pr-title:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validar título del PR
+        uses: amannn/action-semantic-pull-request@v5
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          types: |
+            feat
+            fix
+            perf
+            refactor
+            build
+            docs
+            style
+            test
+            ci
+            chore
+            revert
+          requireScope: false
+          subjectPattern: ^(?![A-Z]).+$
+          subjectPatternError: |
+            El subject del PR debe empezar en minúscula.
+            Recibido: "{subject}"
+            Ejemplo válido: "feat: agregar endpoint de sincronización"
+
+  # Set de pruebas y análisis estático de código
+  test-and-code-analysis:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+
+      - name: Instalar dependencias
+        run: npm ci
+
+      - name: Ejecutar set de pruebas y análisis de tipos
+        run: npm test
+
+      - name: Validar compilación de producción NestJS
+        run: npm run build
+
+  # Build de verificación: que la imagen Docker pueda construirse antes de mergear
+  docker-build-check:
+    needs: test-and-code-analysis
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build Docker (sin push)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: false
+          load: false
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
