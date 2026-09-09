@@ -17,4 +17,12 @@ export class SyncMetaLeadsDto {
   @IsOptional()
   @IsString()
   adAccountId?: string;
+
+  @ApiPropertyOptional({
+    example: '143369634551577',
+    description: 'ID de página de Facebook para consultar formularios de leads. Si se omite, se autodetecta del token.',
+  })
+  @IsOptional()
+  @IsString()
+  pageId?: string;
 }

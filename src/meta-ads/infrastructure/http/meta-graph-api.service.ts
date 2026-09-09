@@ -27,11 +27,17 @@ export class MetaGraphApiService implements IMetaGraphApiPort {
     this.baseUrl = this.configService.get<string>('metaAds.baseUrl')!;
   }
 
+  private async getEffectiveBaseUrl(): Promise<string> {
+    const credential = await this.credentialRepository.findByPlatform(Platform.META);
+    return credential?.apiUrl || this.configService.get<string>('metaAds.baseUrl') || 'https://graph.facebook.com/v19.0';
+  }
+
   async fetchCampaigns(adAccountId: string): Promise<Campaign[]> {
     const accessToken = await this.getCurrentAccessToken();
+    const baseUrl = await this.getEffectiveBaseUrl();
 
     try {
-      let nextUrl: string | null = `${this.baseUrl}/${adAccountId}/campaigns`;
+      let nextUrl: string | null = `${baseUrl}/${adAccountId}/campaigns`;
       let params: Record<string, any> | undefined = {
         fields: 'id,name,status,objective,daily_budget,created_time',
         limit: 100,
@@ -67,8 +73,10 @@ export class MetaGraphApiService implements IMetaGraphApiPort {
   async fetchCampaignInsights(campaignId: string, since: string, until: string): Promise<Campaign> {
     const accessToken = await this.getCurrentAccessToken();
 
+    const baseUrl = await this.getEffectiveBaseUrl();
+
     try {
-      const url = `${this.baseUrl}/${campaignId}/insights`;
+      const url = `${baseUrl}/${campaignId}/insights`;
       const { data } = await firstValueFrom(
         this.httpService.get(url, {
           params: {
@@ -87,9 +95,10 @@ export class MetaGraphApiService implements IMetaGraphApiPort {
 
   async fetchCampaignLeads(campaignId: string): Promise<RawMetaLead[]> {
     const accessToken = await this.getCurrentAccessToken();
+    const baseUrl = await this.getEffectiveBaseUrl();
 
     try {
-      let nextUrl: string | null = `${this.baseUrl}/${campaignId}/leads`;
+      let nextUrl: string | null = `${baseUrl}/${campaignId}/leads`;
       let params: Record<string, any> | undefined = {
         fields: 'id,created_time,campaign_id,ad_id,form_id,field_data',
         limit: 100,
@@ -118,6 +127,9 @@ export class MetaGraphApiService implements IMetaGraphApiPort {
 
       return allLeads;
     } catch (error) {
+      if (error instanceof HttpException) {
+        throw error;
+      }
       // Si la campaña no tiene anuncios de leads o formulario, Meta responde con código de advertencia
       const axiosError = error as AxiosError;
       const metaError = (axiosError.response?.data as any)?.error;
@@ -127,34 +139,165 @@ export class MetaGraphApiService implements IMetaGraphApiPort {
   }
 
   /**
+   * Extrae leads directamente desde los formularios instantáneos (Leadgen Forms)
+   * de la(s) Página(s) de Facebook asociadas al token.
+   */
+  async fetchPageLeadgenFormsLeads(pageId?: string): Promise<RawMetaLead[]> {
+    const accessToken = await this.getCurrentAccessToken();
+    const baseUrl = await this.getEffectiveBaseUrl();
+
+    try {
+      const pageTargets: { id: string; name: string; token: string }[] = [];
+
+      if (pageId) {
+        pageTargets.push({ id: pageId, name: `Page ${pageId}`, token: accessToken });
+      } else {
+        // 1. Detectar si el token actual corresponde a una Página (/me)
+        try {
+          const { data: meData } = await firstValueFrom(
+            this.httpService.get(`${baseUrl}/me`, {
+              params: { fields: 'id,name,category', access_token: accessToken },
+            }),
+          );
+          if (meData?.id) {
+            pageTargets.push({
+              id: meData.id,
+              name: meData.name || `Page ${meData.id}`,
+              token: accessToken,
+            });
+          }
+        } catch (e: any) {
+          this.logger.debug(`No se pudo resolver /me como página: ${e?.message}`);
+        }
+
+        // 2. Si el token es de usuario con acceso a varias páginas (/me/accounts)
+        try {
+          const { data: accountsData } = await firstValueFrom(
+            this.httpService.get(`${baseUrl}/me/accounts`, {
+              params: { fields: 'id,name,access_token', access_token: accessToken },
+            }),
+          );
+          if (Array.isArray(accountsData?.data)) {
+            for (const acc of accountsData.data) {
+              if (acc.id && !pageTargets.some((p) => p.id === acc.id)) {
+                pageTargets.push({
+                  id: acc.id,
+                  name: acc.name || `Page ${acc.id}`,
+                  token: acc.access_token || accessToken,
+                });
+              }
+            }
+          }
+        } catch (e: any) {
+          // Ignorar si el token no tiene permisos de accounts o ya es Page Token
+        }
+      }
+
+      if (pageTargets.length === 0) {
+        this.logger.warn('No se detectaron Páginas de Facebook asociadas al token para consultar formularios.');
+        return [];
+      }
+
+      const allLeads: RawMetaLead[] = [];
+
+      for (const page of pageTargets) {
+        this.logger.log(`Consultando formularios instantáneos para página ${page.name} (${page.id})...`);
+        try {
+          let formsUrl: string | null = `${baseUrl}/${page.id}/leadgen_forms`;
+          let formsParams: Record<string, any> | undefined = {
+            fields: 'id,name,status,leads_count,created_time',
+            limit: 100,
+            access_token: page.token,
+          };
+
+          const allForms: any[] = [];
+          while (formsUrl && allForms.length < 200) {
+            const { data: fData }: { data: any } = await firstValueFrom(
+              this.httpService.get(formsUrl, { params: formsParams }),
+            );
+            if (Array.isArray(fData?.data)) {
+              allForms.push(...fData.data);
+            }
+            formsUrl = fData?.paging?.next ?? null;
+            formsParams = undefined;
+          }
+
+          this.logger.log(`Encontrados ${allForms.length} formularios en página ${page.name}.`);
+
+          for (const form of allForms) {
+            let leadsUrl: string | null = `${baseUrl}/${form.id}/leads`;
+            let leadsParams: Record<string, any> | undefined = {
+              fields: 'id,created_time,campaign_id,ad_id,form_id,field_data',
+              limit: 100,
+              access_token: page.token,
+            };
+
+            let formPageCount = 0;
+            while (leadsUrl && formPageCount < 20) {
+              const { data: lData }: { data: any } = await firstValueFrom(
+                this.httpService.get(leadsUrl, { params: leadsParams }),
+              );
+              if (Array.isArray(lData?.data)) {
+                for (const item of lData.data) {
+                  allLeads.push(MetaLeadMapper.toRawMetaLead(item, undefined, form.name));
+                }
+              }
+              leadsUrl = lData?.paging?.next ?? null;
+              leadsParams = undefined;
+              formPageCount++;
+            }
+          }
+        } catch (pageErr: any) {
+          const errMsg = pageErr?.response?.data?.error?.message ?? pageErr.message;
+          this.logger.warn(`No se pudieron extraer formularios para página ${page.id}: ${errMsg}`);
+        }
+      }
+
+      this.logger.log(`Total leads obtenidos desde formularios de Páginas de Meta: ${allLeads.length}`);
+      return allLeads;
+    } catch (error: any) {
+      if (error instanceof HttpException) {
+        throw error;
+      }
+      this.logger.error(`Error al extraer leads de formularios Meta: ${error?.message || error}`);
+      return [];
+    }
+  }
+
+  /**
    * Lee el token vigente desde platform_credentials (BD) en cada llamada.
    */
   private async getCurrentAccessToken(): Promise<string> {
     const credential = await this.credentialRepository.findByPlatform(Platform.META);
+    const token = credential?.accessToken || this.configService.get<string>('metaAds.accessToken');
 
-    if (!credential || !credential.accessToken) {
+    if (!token || token.trim().length === 0 || token.startsWith('tu_')) {
       throw new HttpException(
-        'No hay un token de Meta configurado. Verifica platform_credentials o META_ACCESS_TOKEN en el primer arranque.',
-        HttpStatus.FAILED_DEPENDENCY,
+        'Las variables de Meta Ads no están configuradas en el sistema. Debe comunicarse con el Administrador para configurar las variables y poder extraer los leads.',
+        HttpStatus.PRECONDITION_FAILED,
       );
     }
 
-    if (credential.isExpired()) {
+    if (credential && credential.isExpired()) {
       this.logger.error('El token de Meta almacenado ya expiró. Se requiere renovación manual.');
       throw new HttpException(
-        'El token de Meta expiró. Renueva manualmente vía POST /v1/platform-credentials/meta/renew o regenera desde Graph API Explorer.',
-        HttpStatus.FAILED_DEPENDENCY,
+        'El token de Meta expiró. Renueva las credenciales en la sección de Variables o solicita asistencia al Administrador.',
+        HttpStatus.PRECONDITION_FAILED,
       );
     }
 
-    if (credential.isNearExpiration()) {
+    if (credential && credential.isNearExpiration()) {
       this.logger.warn('El token de Meta está por expirar en menos de 7 días. La renovación semanal debería cubrir esto.');
     }
 
-    return credential.accessToken;
+    return token;
   }
 
-  private handleMetaError(error: AxiosError): never {
+  private handleMetaError(error: AxiosError | any): never {
+    if (error instanceof HttpException) {
+      throw error;
+    }
+
     const status = error.response?.status ?? HttpStatus.BAD_GATEWAY;
     const metaError = (error.response?.data as any)?.error;
 

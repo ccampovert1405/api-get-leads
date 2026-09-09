@@ -21,19 +21,20 @@ export class LeadsController {
   @ApiResponse({ status: 401, description: 'Token de autenticación faltante o inválido' })
   @ApiResponse({ status: 403, description: 'No posee los permisos requeridos' })
   async findAll(@Query() query: ListLeadsQueryDto) {
+    const pageSize = query.pageSize ?? query.limit ?? 50;
     const { items, total } = await this.leadRepository.findAll({
       source: query.source,
       campaignId: query.campaignId,
       from: query.from ? new Date(query.from) : undefined,
       to: query.to ? new Date(query.to) : undefined,
       page: query.page,
-      pageSize: query.pageSize,
+      pageSize,
     });
 
     return {
       total,
       page: query.page ?? 1,
-      pageSize: query.pageSize ?? 50,
+      pageSize,
       items,
     };
   }

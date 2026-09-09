@@ -1,11 +1,12 @@
 import { IsDateString, IsEnum, IsInt, IsOptional, IsString, Max, Min } from 'class-validator';
-import { Type } from 'class-transformer';
+import { Type, Transform } from 'class-transformer';
 import { ApiPropertyOptional } from '@nestjs/swagger';
 import { LeadSource } from '../../domain/entities/lead.entity';
 
 export class ListLeadsQueryDto {
   @ApiPropertyOptional({ enum: LeadSource })
   @IsOptional()
+  @Transform(({ value }) => (typeof value === 'string' ? value.toUpperCase() : value))
   @IsEnum(LeadSource)
   source?: LeadSource;
 
@@ -38,4 +39,13 @@ export class ListLeadsQueryDto {
   @Min(1)
   @Max(200)
   pageSize?: number = 50;
+
+  @ApiPropertyOptional({ description: 'Alias para pageSize' })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(200)
+  limit?: number;
 }
+

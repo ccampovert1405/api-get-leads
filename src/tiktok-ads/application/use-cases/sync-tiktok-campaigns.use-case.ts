@@ -6,6 +6,11 @@ import {
 } from '../../domain/repositories/tiktok-campaign.repository.interface';
 import { TIKTOK_API_PORT, ITikTokApiPort } from '../ports/tiktok-api.port';
 import { InvalidTikTokCampaignDataException } from '../../domain/exceptions/domain.exceptions';
+import {
+  IPlatformCredentialRepository,
+  PLATFORM_CREDENTIAL_REPOSITORY,
+} from '../../../platform-credentials/domain/repositories/platform-credential.repository.interface';
+import { Platform } from '../../../platform-credentials/domain/entities/platform-credential.entity';
 
 @Injectable()
 export class SyncTikTokCampaignsUseCase {
@@ -15,15 +20,19 @@ export class SyncTikTokCampaignsUseCase {
     @Inject(TIKTOK_API_PORT) private readonly tiktokApi: ITikTokApiPort,
     @Inject(TIKTOK_CAMPAIGN_REPOSITORY)
     private readonly campaignRepository: ITikTokCampaignRepository,
+    @Inject(PLATFORM_CREDENTIAL_REPOSITORY)
+    private readonly credentialRepository: IPlatformCredentialRepository,
     private readonly configService: ConfigService,
   ) {}
 
   async execute(rawAdvertiserId?: string): Promise<{ synced: number }> {
-    const advertiserId = rawAdvertiserId || this.configService.get<string>('tiktokAds.advertiserId');
+    const credential = await this.credentialRepository.findByPlatform(Platform.TIKTOK);
+    const advertiserId =
+      rawAdvertiserId || credential?.accountId || this.configService.get<string>('tiktokAds.advertiserId');
 
-    if (!advertiserId || advertiserId.trim().length === 0) {
+    if (!advertiserId || advertiserId.trim().length === 0 || advertiserId.includes('tu_')) {
       throw new InvalidTikTokCampaignDataException(
-        'advertiserId es requerido. Envíalo en el body o define TIKTOK_ADVERTISER_ID en el .env',
+        'El ID de Anunciante de TikTok Ads (TIKTOK_ADVERTISER_ID) no está configurado. Debe comunicarse con el Administrador para configurar las variables y poder extraer los leads.',
       );
     }
 

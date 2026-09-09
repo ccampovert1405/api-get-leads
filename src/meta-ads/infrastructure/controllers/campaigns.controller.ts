@@ -65,6 +65,7 @@ export class CampaignsController {
     return this.syncMetaLeadsUseCase.execute({
       campaignId: dto?.campaignId,
       adAccountId: dto?.adAccountId,
+      pageId: dto?.pageId,
     });
   }
 }

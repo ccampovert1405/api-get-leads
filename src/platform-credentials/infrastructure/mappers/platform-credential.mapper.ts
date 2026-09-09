@@ -12,6 +12,11 @@ export class PlatformCredentialMapper {
       orm.lastRenewalStatus as RenewalStatus,
       orm.lastRenewalError,
       orm.updatedAt,
+      orm.appId,
+      orm.appSecret,
+      orm.accountId,
+      orm.apiUrl,
+      orm.isActive ?? true,
     );
   }
 }
