@@ -1,7 +1,7 @@
 import { RawMetaLead } from '../../application/ports/meta-graph-api.port';
 
 export class MetaLeadMapper {
-  static toRawMetaLead(rawItem: any, fallbackCampaignId?: string): RawMetaLead {
+  static toRawMetaLead(rawItem: any, fallbackCampaignId?: string, fallbackFormName?: string): RawMetaLead {
     const fieldData = Array.isArray(rawItem.field_data) ? rawItem.field_data : [];
     const fieldsMap: Record<string, string> = {};
 
@@ -26,7 +26,7 @@ export class MetaLeadMapper {
       sourceLeadId: rawItem.id,
       campaignId: rawItem.campaign_id ?? fallbackCampaignId ?? null,
       formId: rawItem.form_id ?? null,
-      formName: rawItem.form_id ? `Form ${rawItem.form_id}` : null,
+      formName: fallbackFormName ?? (rawItem.form_id ? `Form ${rawItem.form_id}` : null),
       fullName: fullName || null,
       email: email || null,
       phone: phone || null,

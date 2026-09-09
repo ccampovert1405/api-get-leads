@@ -28,7 +28,7 @@ export class SyncMetaLeadsUseCase {
     private readonly syncCampaignsUseCase: SyncCampaignsUseCase,
   ) {}
 
-  async execute(params?: { campaignId?: string; adAccountId?: string }): Promise<SyncMetaLeadsResult> {
+  async execute(params?: { campaignId?: string; adAccountId?: string; pageId?: string }): Promise<SyncMetaLeadsResult> {
     let campaignIdsToQuery: string[] = [];
 
     if (params?.campaignId) {
@@ -38,49 +38,96 @@ export class SyncMetaLeadsUseCase {
 
       // Si aún no hay campañas guardadas en base de datos, sincroniza automáticamente primero
       if (localCampaigns.length === 0) {
-        this.logger.log('No hay campañas en base de datos. Ejecutando sincronización previa de campañas...');
-        await this.syncCampaignsUseCase.execute(params?.adAccountId);
-        localCampaigns = await this.campaignRepository.findAll();
+        this.logger.log('No hay campañas en base de datos. Intentando sincronización previa de campañas...');
+        try {
+          await this.syncCampaignsUseCase.execute(params?.adAccountId);
+          localCampaigns = await this.campaignRepository.findAll();
+        } catch (campErr: any) {
+          this.logger.warn(`No se pudieron sincronizar campañas de cuenta publicitaria: ${campErr?.message || campErr}`);
+        }
       }
 
       campaignIdsToQuery = localCampaigns.map((c) => c.metaCampaignId);
     }
 
-    if (campaignIdsToQuery.length === 0) {
-      this.logger.warn('No se encontraron campañas para consultar leads de Meta.');
-      return { campaignsChecked: 0, leadsFetched: 0, leadsSaved: 0 };
+    const allLeads: Lead[] = [];
+    const seenLeadIds = new Set<string>();
+
+    // 1. Consultar leads asociados a campañas de Meta
+    if (campaignIdsToQuery.length > 0) {
+      this.logger.log(`Consultando leads de Meta para ${campaignIdsToQuery.length} campañas...`);
+      for (const campaignId of campaignIdsToQuery) {
+        try {
+          const rawLeads = await this.metaGraphApi.fetchCampaignLeads(campaignId);
+          for (const row of rawLeads) {
+            if (!seenLeadIds.has(row.sourceLeadId)) {
+              seenLeadIds.add(row.sourceLeadId);
+              allLeads.push(
+                new Lead(
+                  '', // id generado por BD
+                  LeadSource.META,
+                  row.sourceLeadId,
+                  row.campaignId,
+                  row.formName ?? null,
+                  row.fullName ?? null,
+                  row.email ?? null,
+                  row.phone ?? null,
+                  row.rawPayload,
+                  row.receivedAt,
+                  new Date(),
+                ),
+              );
+            }
+          }
+        } catch (leadErr: any) {
+          this.logger.warn(`Error al consultar leads para campaña ${campaignId}: ${leadErr?.message || leadErr}`);
+        }
+      }
     }
 
-    this.logger.log(`Consultando leads de Meta para ${campaignIdsToQuery.length} campañas...`);
-
-    const allLeads: Lead[] = [];
-
-    for (const campaignId of campaignIdsToQuery) {
-      const rawLeads = await this.metaGraphApi.fetchCampaignLeads(campaignId);
-
-      for (const row of rawLeads) {
-        allLeads.push(
-          new Lead(
-            '', // id generado por BD
-            LeadSource.META,
-            row.sourceLeadId,
-            row.campaignId,
-            row.formName ?? null,
-            row.fullName ?? null,
-            row.email ?? null,
-            row.phone ?? null,
-            row.rawPayload,
-            row.receivedAt,
-            new Date(),
-          ),
-        );
+    // 2. Consultar leads desde formularios instantáneos (LeadGen Forms) de la(s) Página(s) de Meta
+    try {
+      this.logger.log('Consultando leads desde formularios instantáneos de Páginas de Meta...');
+      const formsLeads = await this.metaGraphApi.fetchPageLeadgenFormsLeads(params?.pageId);
+      for (const row of formsLeads) {
+        if (!seenLeadIds.has(row.sourceLeadId)) {
+          seenLeadIds.add(row.sourceLeadId);
+          allLeads.push(
+            new Lead(
+              '', // id generado por BD
+              LeadSource.META,
+              row.sourceLeadId,
+              row.campaignId,
+              row.formName ?? null,
+              row.fullName ?? null,
+              row.email ?? null,
+              row.phone ?? null,
+              row.rawPayload,
+              row.receivedAt,
+              new Date(),
+            ),
+          );
+        }
       }
+    } catch (formsErr: any) {
+      this.logger.warn(`Error al consultar formularios de página Meta: ${formsErr?.message || formsErr}`);
+    }
+
+    if (allLeads.length === 0) {
+      this.logger.log(
+        `Sincronización Meta completada: 0 leads encontrados (revisadas ${campaignIdsToQuery.length} campañas y formularios de página).`,
+      );
+      return {
+        campaignsChecked: campaignIdsToQuery.length,
+        leadsFetched: 0,
+        leadsSaved: 0,
+      };
     }
 
     const { inserted } = await this.leadRepository.saveMany(allLeads);
 
     this.logger.log(
-      `Sincronización de leads Meta completada: ${campaignIdsToQuery.length} campañas revisadas, ` +
+      `Sincronización de leads Meta completada exitosamente: ${campaignIdsToQuery.length} campañas revisadas, ` +
         `${allLeads.length} leads obtenidos, ${inserted} persistidos en base de datos.`,
     );
 

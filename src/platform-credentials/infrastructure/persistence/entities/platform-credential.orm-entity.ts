@@ -24,6 +24,21 @@ export class PlatformCredentialOrmEntity {
   @Column({ name: 'last_renewal_error', type: 'text', nullable: true })
   lastRenewalError: string | null;
 
+  @Column({ name: 'app_id', type: 'varchar', length: 100, nullable: true })
+  appId: string | null;
+
+  @Column({ name: 'app_secret', type: 'text', nullable: true })
+  appSecret: string | null;
+
+  @Column({ name: 'account_id', type: 'varchar', length: 100, nullable: true })
+  accountId: string | null;
+
+  @Column({ name: 'api_url', type: 'varchar', length: 255, nullable: true })
+  apiUrl: string | null;
+
+  @Column({ name: 'is_active', type: 'boolean', default: true })
+  isActive: boolean;
+
   @UpdateDateColumn({ name: 'updated_at' })
   updatedAt: Date;
 }

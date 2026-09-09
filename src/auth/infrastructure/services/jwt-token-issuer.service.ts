@@ -17,6 +17,12 @@ export class JwtTokenIssuer implements ITokenIssuer {
       accessToken: this.jwtService.sign(payload, { expiresIn }),
       expiresIn,
       tokenType: 'Bearer',
+      user: {
+        id: payload.sub,
+        username: payload.username,
+        role: payload.role,
+        permissions: payload.permissions || [],
+      },
     };
   }
 }

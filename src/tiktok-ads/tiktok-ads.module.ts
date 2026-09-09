@@ -17,6 +17,7 @@ import { TIKTOK_API_PORT } from './application/ports/tiktok-api.port';
 import { TIKTOK_CAMPAIGN_REPOSITORY } from './domain/repositories/tiktok-campaign.repository.interface';
 
 import { LeadsModule } from '../leads/leads.module';
+import { PlatformCredentialsModule } from '../platform-credentials/platform-credentials.module';
 
 @Module({
   imports: [
@@ -25,6 +26,7 @@ import { LeadsModule } from '../leads/leads.module';
     HttpModule.register({ timeout: 30000, maxRedirects: 3 }),
     TypeOrmModule.forFeature([TikTokCampaignOrmEntity]),
     LeadsModule, // provee LEAD_REPOSITORY para persistir los leads descargados
+    PlatformCredentialsModule, // provee PLATFORM_CREDENTIAL_REPOSITORY para leer credenciales de TikTok
   ],
   controllers: [TikTokCampaignsController, TikTokLeadsController],
   providers: [

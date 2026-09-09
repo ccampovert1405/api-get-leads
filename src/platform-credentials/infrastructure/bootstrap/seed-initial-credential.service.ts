@@ -7,11 +7,9 @@ import {
 import { Platform } from '../../domain/entities/platform-credential.entity';
 
 /**
- * Al arrancar la app, si no hay credencial de Meta en base de datos todavía,
- * la siembra desde META_ACCESS_TOKEN del .env. Esto permite migrar del modelo
- * "token estático en .env" al modelo "token gestionado en BD" sin pasos manuales:
- * el primer arranque hace la migración solo, los arranques siguientes no la tocan
- * (porque ya existe en BD, que es la fuente de verdad a partir de ahí).
+ * Al arrancar la app, si no hay credenciales de Meta o TikTok en base de datos todavía,
+ * las siembra desde las variables de entorno (.env). Esto permite que la base de datos
+ * sea la fuente de verdad y que el Super Administrador las pueda editar dinámicamente.
  */
 @Injectable()
 export class SeedInitialCredentialService implements OnModuleInit {
@@ -24,31 +22,61 @@ export class SeedInitialCredentialService implements OnModuleInit {
   ) {}
 
   async onModuleInit(): Promise<void> {
+    await this.seedMeta();
+    await this.seedTikTok();
+  }
+
+  private async seedMeta(): Promise<void> {
     const existing = await this.credentialRepository.findByPlatform(Platform.META);
+    if (existing) return;
 
-    if (existing) {
-      return; // BD ya es la fuente de verdad, no sobreescribimos con el .env
-    }
-
-    const envToken = this.configService.get<string>('metaAds.accessToken');
-
-    if (!envToken) {
-      this.logger.warn(
-        'No hay credencial de Meta en BD ni META_ACCESS_TOKEN en .env. ' +
-          'La API de Meta no podrá autenticarse hasta que se configure un token.',
-      );
-      return;
-    }
+    const envToken = this.configService.get<string>('metaAds.accessToken') || '';
+    const envAppId = this.configService.get<string>('metaAds.appId') || '';
+    const envAppSecret = this.configService.get<string>('metaAds.appSecret') || '';
+    const envAccountId = this.configService.get<string>('metaAds.adAccountId') || '';
+    const envBaseUrl = this.configService.get<string>('metaAds.baseUrl') || 'https://graph.facebook.com/v19.0';
 
     await this.credentialRepository.upsert({
       platform: Platform.META,
       accessToken: envToken,
+      appId: envAppId,
+      appSecret: envAppSecret,
+      accountId: envAccountId,
+      apiUrl: envBaseUrl,
+      isActive: true,
       expiresAt: null,
       lastRenewedAt: new Date(),
-      lastRenewalStatus: 'OK',
+      lastRenewalStatus: envToken ? 'OK' : 'NEVER_RENEWED',
       lastRenewalError: null,
     });
 
-    this.logger.log('Credencial de Meta sembrada en BD desde META_ACCESS_TOKEN (.env).');
+    this.logger.log('Variables de Meta Ads sembradas en BD desde configuración inicial.');
+  }
+
+  private async seedTikTok(): Promise<void> {
+    const existing = await this.credentialRepository.findByPlatform(Platform.TIKTOK);
+    if (existing) return;
+
+    const envToken = this.configService.get<string>('tiktokAds.accessToken') || '';
+    const envAppId = this.configService.get<string>('tiktokAds.appId') || '';
+    const envAppSecret = this.configService.get<string>('tiktokAds.appSecret') || '';
+    const envAccountId = this.configService.get<string>('tiktokAds.advertiserId') || '';
+    const envBaseUrl = this.configService.get<string>('tiktokAds.baseUrl') || 'https://business-api.tiktok.com/open_api/v1.3';
+
+    await this.credentialRepository.upsert({
+      platform: Platform.TIKTOK,
+      accessToken: envToken,
+      appId: envAppId,
+      appSecret: envAppSecret,
+      accountId: envAccountId,
+      apiUrl: envBaseUrl,
+      isActive: true,
+      expiresAt: null,
+      lastRenewedAt: new Date(),
+      lastRenewalStatus: envToken ? 'OK' : 'NEVER_RENEWED',
+      lastRenewalError: null,
+    });
+
+    this.logger.log('Variables de TikTok Ads sembradas en BD desde configuración inicial.');
   }
 }

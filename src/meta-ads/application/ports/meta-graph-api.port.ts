@@ -16,6 +16,7 @@ export interface IMetaGraphApiPort {
   fetchCampaigns(adAccountId: string): Promise<Campaign[]>;
   fetchCampaignInsights(campaignId: string, since: string, until: string): Promise<Campaign>;
   fetchCampaignLeads(campaignId: string): Promise<RawMetaLead[]>;
+  fetchPageLeadgenFormsLeads(pageId?: string): Promise<RawMetaLead[]>;
 }
 
 export const META_GRAPH_API_PORT = Symbol('IMetaGraphApiPort');

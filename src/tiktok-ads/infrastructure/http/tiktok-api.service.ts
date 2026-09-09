@@ -1,4 +1,4 @@
-import { HttpException, HttpStatus, Injectable, Logger } from '@nestjs/common';
+import { HttpException, HttpStatus, Inject, Injectable, Logger } from '@nestjs/common';
 import { HttpService } from '@nestjs/axios';
 import { ConfigService } from '@nestjs/config';
 import { firstValueFrom } from 'rxjs';
@@ -7,26 +7,54 @@ import { ITikTokApiPort, RawLeadRow } from '../../application/ports/tiktok-api.p
 import { TikTokCampaign } from '../../domain/entities/tiktok-campaign.entity';
 import { TikTokResponseMapper } from '../mappers/tiktok-response.mapper';
 import { TikTokLeadCsvMapper } from '../mappers/tiktok-lead-csv.mapper';
+import {
+  IPlatformCredentialRepository,
+  PLATFORM_CREDENTIAL_REPOSITORY,
+} from '../../../platform-credentials/domain/repositories/platform-credential.repository.interface';
+import { Platform } from '../../../platform-credentials/domain/entities/platform-credential.entity';
 
 @Injectable()
 export class TikTokApiService implements ITikTokApiPort {
   private readonly logger = new Logger(TikTokApiService.name);
-  private readonly baseUrl: string;
-  private readonly accessToken: string;
 
   constructor(
     private readonly httpService: HttpService,
     private readonly configService: ConfigService,
-  ) {
-    this.baseUrl = this.configService.get<string>('tiktokAds.baseUrl')!;
-    this.accessToken = this.configService.get<string>('tiktokAds.accessToken')!;
+    @Inject(PLATFORM_CREDENTIAL_REPOSITORY)
+    private readonly credentialRepository: IPlatformCredentialRepository,
+  ) {}
+
+  private async getEffectiveBaseUrl(): Promise<string> {
+    const cred = await this.credentialRepository.findByPlatform(Platform.TIKTOK);
+    return cred?.apiUrl || this.configService.get<string>('tiktokAds.baseUrl') || 'https://business-api.tiktok.com/open_api/v1.3';
+  }
+
+  private async getEffectiveAccessToken(): Promise<string> {
+    const cred = await this.credentialRepository.findByPlatform(Platform.TIKTOK);
+    const token = cred?.accessToken || this.configService.get<string>('tiktokAds.accessToken');
+
+    if (!token || token.trim().length === 0 || token.startsWith('tu_')) {
+      throw new HttpException(
+        'Las variables de TikTok Ads no están configuradas en el sistema. Debe comunicarse con el Administrador para configurar las variables y poder extraer los leads.',
+        HttpStatus.PRECONDITION_FAILED,
+      );
+    }
+    return token;
+  }
+
+  private async authHeaders(): Promise<Record<string, string>> {
+    const token = await this.getEffectiveAccessToken();
+    return { 'Access-Token': token };
   }
 
   async fetchCampaigns(advertiserId: string): Promise<TikTokCampaign[]> {
+    const baseUrl = await this.getEffectiveBaseUrl();
+    const headers = await this.authHeaders();
+
     try {
       const { data } = await firstValueFrom(
-        this.httpService.get(`${this.baseUrl}/campaign/get/`, {
-          headers: this.authHeaders(),
+        this.httpService.get(`${baseUrl}/campaign/get/`, {
+          headers,
           params: {
             advertiser_id: advertiserId,
             fields: JSON.stringify([
@@ -60,17 +88,20 @@ export class TikTokApiService implements ITikTokApiPort {
     startDate: string;
     endDate: string;
   }): Promise<{ taskId: string }> {
+    const baseUrl = await this.getEffectiveBaseUrl();
+    const headers = await this.authHeaders();
+
     try {
       const { data } = await firstValueFrom(
         this.httpService.post(
-          `${this.baseUrl}/page/lead/task/create/`,
+          `${baseUrl}/page/lead/task/create/`,
           {
             advertiser_id: params.advertiserId,
             page_id: params.pageId,
             start_date: params.startDate,
             end_date: params.endDate,
           },
-          { headers: this.authHeaders() },
+          { headers },
         ),
       );
 
@@ -93,10 +124,13 @@ export class TikTokApiService implements ITikTokApiPort {
     downloadUrl?: string;
     failureReason?: string;
   }> {
+    const baseUrl = await this.getEffectiveBaseUrl();
+    const headers = await this.authHeaders();
+
     try {
       const { data } = await firstValueFrom(
-        this.httpService.get(`${this.baseUrl}/page/lead/task/check/`, {
-          headers: this.authHeaders(),
+        this.httpService.get(`${baseUrl}/page/lead/task/check/`, {
+          headers,
           params: { task_id: taskId },
         }),
       );
@@ -129,13 +163,7 @@ export class TikTokApiService implements ITikTokApiPort {
     }
   }
 
-  private authHeaders() {
-    return { 'Access-Token': this.accessToken };
-  }
-
   private assertOk(data: any): void {
-    // TikTok Business API devuelve code=0 en éxito, distinto de cero en error,
-    // incluso con status HTTP 200.
     if (data?.code !== undefined && data.code !== 0) {
       throw new HttpException(
         { message: 'Error de TikTok API', detail: data.message, tiktokCode: data.code },

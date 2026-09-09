@@ -9,6 +9,12 @@ export interface AccessToken {
   accessToken: string;
   expiresIn: string;
   tokenType: 'Bearer';
+  user?: {
+    id: string;
+    username: string;
+    role: string;
+    permissions: string[];
+  };
 }
 
 export interface ITokenIssuer {

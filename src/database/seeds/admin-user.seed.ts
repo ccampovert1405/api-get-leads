@@ -16,10 +16,12 @@ const INITIAL_MENUS = [
   { label: 'Campañas Publicitarias', ruta: 'campaigns', icono: 'ads_click', orden: 6, tipo: 'Operaciones' },
   { label: 'Programación Crontab', ruta: 'scheduler', icono: 'schedule', orden: 7, tipo: 'Operaciones' },
   { label: 'APIs Asignadas (Swagger RBAC)', ruta: 'swagger', icono: 'api', orden: 8, tipo: 'Plataforma' },
-  { label: 'Gestión de Usuarios', ruta: 'users', icono: 'manage_accounts', orden: 9, tipo: 'Administracion' },
-  { label: 'Roles & Autorizaciones', ruta: 'roles', icono: 'admin_panel_settings', orden: 10, tipo: 'Administracion' },
-  { label: 'Catálogo de Permisos', ruta: 'permissions', icono: 'key', orden: 11, tipo: 'Administracion' },
-  { label: 'Gestión de Menús', ruta: 'menus', icono: 'menu_open', orden: 12, tipo: 'Administracion' },
+  { label: 'Tutorial para Obtener Variables', ruta: 'tutorial', icono: 'menu_book', orden: 9, tipo: 'Plataforma' },
+  { label: 'Gestión de Usuarios', ruta: 'users', icono: 'manage_accounts', orden: 10, tipo: 'Administracion' },
+  { label: 'Roles & Autorizaciones', ruta: 'roles', icono: 'admin_panel_settings', orden: 11, tipo: 'Administracion' },
+  { label: 'Catálogo de Permisos', ruta: 'permissions', icono: 'key', orden: 12, tipo: 'Administracion' },
+  { label: 'Gestión de Menús', ruta: 'menus', icono: 'menu_open', orden: 13, tipo: 'Administracion' },
+  { label: 'Variables Meta & TikTok', ruta: 'variables', icono: 'tune', orden: 14, tipo: 'Variables' },
 ];
 
 /**
@@ -78,7 +80,7 @@ export async function seedAdminUser(dataSource: DataSource): Promise<void> {
     where: { nombreRol: 'Analista' },
     relations: { menus: true },
   });
-  const analystAllowedRoutes = new Set(['dashboard', 'tactical', 'creatives', 'matrix', 'leads', 'campaigns']);
+  const analystAllowedRoutes = new Set(['dashboard', 'tactical', 'creatives', 'matrix', 'leads', 'campaigns', 'tutorial']);
   const analystMenus = allMenus.filter((m) => analystAllowedRoutes.has(m.ruta));
 
   if (!analystRole) {

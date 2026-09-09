@@ -15,11 +15,13 @@ import { GetCredentialStatusUseCase } from './application/use-cases/get-credenti
 import { META_TOKEN_RENEWAL_PORT } from './application/ports/token-renewal.port';
 import { PLATFORM_CREDENTIAL_REPOSITORY } from './domain/repositories/platform-credential.repository.interface';
 
+import { SyncScheduleOrmEntity } from '../sync-schedules/infrastructure/persistence/entities/sync-schedule.orm-entity';
+
 @Module({
   imports: [
     ConfigModule,
     HttpModule.register({ timeout: 10000 }),
-    TypeOrmModule.forFeature([PlatformCredentialOrmEntity]),
+    TypeOrmModule.forFeature([PlatformCredentialOrmEntity, SyncScheduleOrmEntity]),
   ],
   controllers: [PlatformCredentialsController],
   providers: [
