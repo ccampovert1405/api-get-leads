@@ -8,6 +8,8 @@ export enum LeadSource {
  * trazabilidad/auditoría, sin forzar al dominio a conocer su forma exacta.
  */
 export class Lead {
+  public readonly campaignId: string | null;
+
   constructor(
     public readonly id: string,
     public readonly source: LeadSource,
@@ -20,7 +22,9 @@ export class Lead {
     public readonly rawPayload: Record<string, unknown>,
     public readonly receivedAt: Date,
     public readonly createdAt: Date,
-  ) {}
+  ) {
+    this.campaignId = sourceCampaignId;
+  }
 
   hasContactInfo(): boolean {
     return Boolean(this.email || this.phone);

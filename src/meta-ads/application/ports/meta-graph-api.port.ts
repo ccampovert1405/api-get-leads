@@ -1,4 +1,5 @@
 import { Campaign } from '../../domain/entities/campaign.entity';
+import { LeadForm } from '../../domain/entities/lead-form.entity';
 
 export interface RawMetaLead {
   sourceLeadId: string;
@@ -17,6 +18,7 @@ export interface IMetaGraphApiPort {
   fetchCampaignInsights(campaignId: string, since: string, until: string): Promise<Campaign>;
   fetchCampaignLeads(campaignId: string): Promise<RawMetaLead[]>;
   fetchPageLeadgenFormsLeads(pageId?: string): Promise<RawMetaLead[]>;
+  fetchPageLeadForms(pageId?: string): Promise<LeadForm[]>;
 }
 
 export const META_GRAPH_API_PORT = Symbol('IMetaGraphApiPort');
