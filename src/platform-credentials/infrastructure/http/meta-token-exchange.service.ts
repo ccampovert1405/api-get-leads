@@ -1,6 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { HttpService } from '@nestjs/axios';
-import { ConfigService } from '@nestjs/config';
 import { firstValueFrom } from 'rxjs';
 import { AxiosError } from 'axios';
 import { ITokenRenewalPort, TokenExchangeResult } from '../../application/ports/token-renewal.port';
@@ -10,10 +9,7 @@ export class MetaTokenExchangeService implements ITokenRenewalPort {
   private readonly logger = new Logger(MetaTokenExchangeService.name);
   private readonly graphBaseUrl = 'https://graph.facebook.com/v21.0';
 
-  constructor(
-    private readonly httpService: HttpService,
-    private readonly configService: ConfigService,
-  ) {}
+  constructor(private readonly httpService: HttpService) {}
 
   /**
    * Intercambia el token vigente por uno renovado usando fb_exchange_token.
@@ -26,10 +22,11 @@ export class MetaTokenExchangeService implements ITokenRenewalPort {
    * red de seguridad adicional, útil mientras se usa un token derivado de
    * una cuenta personal.
    */
-  async renew(currentAccessToken: string): Promise<TokenExchangeResult> {
-    const appId = this.configService.get<string>('metaAds.appId');
-    const appSecret = this.configService.get<string>('metaAds.appSecret');
-
+  async renew(
+    currentAccessToken: string,
+    appId: string,
+    appSecret: string,
+  ): Promise<TokenExchangeResult> {
     if (!appId || !appSecret) {
       throw new Error('META_APP_ID / META_APP_SECRET no configurados, no se puede renovar el token');
     }
