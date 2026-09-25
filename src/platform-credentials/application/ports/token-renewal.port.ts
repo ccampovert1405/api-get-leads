@@ -10,7 +10,7 @@ export interface TokenExchangeResult {
  * conozca los detalles HTTP concretos de cada API externa.
  */
 export interface ITokenRenewalPort {
-  renew(currentAccessToken: string): Promise<TokenExchangeResult>;
+  renew(currentAccessToken: string, appId: string, appSecret: string): Promise<TokenExchangeResult>;
 }
 
 export const META_TOKEN_RENEWAL_PORT = Symbol('ITokenRenewalPort_Meta');

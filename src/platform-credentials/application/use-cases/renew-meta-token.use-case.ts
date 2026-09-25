@@ -1,4 +1,5 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import {
   IPlatformCredentialRepository,
   PLATFORM_CREDENTIAL_REPOSITORY,
@@ -21,6 +22,7 @@ export class RenewMetaTokenUseCase {
     private readonly credentialRepository: IPlatformCredentialRepository,
     @Inject(META_TOKEN_RENEWAL_PORT)
     private readonly tokenRenewal: ITokenRenewalPort,
+    private readonly configService: ConfigService,
   ) {}
 
   async execute(): Promise<RenewTokenResult> {
@@ -32,8 +34,18 @@ export class RenewMetaTokenUseCase {
       return { renewed: false, expiresAt: null, error: msg };
     }
 
+    const appId = current.appId || this.configService.get<string>('metaAds.appId');
+    const appSecret = current.appSecret || this.configService.get<string>('metaAds.appSecret');
+
+    if (!appId || !appSecret) {
+      const msg =
+        'META_APP_ID / META_APP_SECRET no configurados en BD ni en variables de entorno, no se puede renovar el token';
+      this.logger.warn(msg);
+      return { renewed: false, expiresAt: current.expiresAt, error: msg };
+    }
+
     try {
-      const result = await this.tokenRenewal.renew(current.accessToken);
+      const result = await this.tokenRenewal.renew(current.accessToken, appId, appSecret);
 
       const expiresAt = result.expiresInSeconds
         ? new Date(Date.now() + result.expiresInSeconds * 1000)
