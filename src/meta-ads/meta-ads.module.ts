@@ -12,6 +12,7 @@ import { CampaignOrmEntity } from './infrastructure/persistence/entities/campaig
 import { SyncCampaignsUseCase } from './application/use-cases/sync-campaigns.use-case';
 import { GetCampaignsUseCase } from './application/use-cases/get-campaigns.use-case';
 import { SyncMetaLeadsUseCase } from './application/use-cases/sync-meta-leads.use-case';
+import { GetLeadFormsUseCase } from './application/use-cases/get-lead-forms.use-case';
 import { META_GRAPH_API_PORT } from './application/ports/meta-graph-api.port';
 import { CAMPAIGN_REPOSITORY } from './domain/repositories/campaign.repository.interface';
 
@@ -31,9 +32,10 @@ import { LeadsModule } from '../leads/leads.module';
     SyncCampaignsUseCase,
     GetCampaignsUseCase,
     SyncMetaLeadsUseCase,
+    GetLeadFormsUseCase,
     { provide: META_GRAPH_API_PORT, useClass: MetaGraphApiService },
     { provide: CAMPAIGN_REPOSITORY, useClass: TypeOrmCampaignRepository },
   ],
-  exports: [SyncCampaignsUseCase, SyncMetaLeadsUseCase],
+  exports: [SyncCampaignsUseCase, SyncMetaLeadsUseCase, GetLeadFormsUseCase],
 })
 export class MetaAdsModule {}

@@ -5,6 +5,7 @@ import { firstValueFrom } from 'rxjs';
 import { AxiosError } from 'axios';
 import { IMetaGraphApiPort, RawMetaLead } from '../../application/ports/meta-graph-api.port';
 import { Campaign } from '../../domain/entities/campaign.entity';
+import { LeadForm } from '../../domain/entities/lead-form.entity';
 import { MetaResponseMapper } from '../mappers/meta-response.mapper';
 import { MetaLeadMapper } from '../mappers/meta-lead.mapper';
 import {
@@ -139,59 +140,149 @@ export class MetaGraphApiService implements IMetaGraphApiPort {
   }
 
   /**
+   * Resuelve las Páginas de Facebook objetivo según el pageId especificado
+   * o autodescubre las páginas asociadas al token (/me y /me/accounts).
+   */
+  private async resolvePageTargets(
+    pageId?: string,
+  ): Promise<{ id: string; name: string; token: string }[]> {
+    const accessToken = await this.getCurrentAccessToken();
+    const baseUrl = await this.getEffectiveBaseUrl();
+    const pageTargets: { id: string; name: string; token: string }[] = [];
+
+    if (pageId) {
+      pageTargets.push({ id: pageId, name: `Page ${pageId}`, token: accessToken });
+    } else {
+      // 1. Detectar si el token actual corresponde a una Página (/me)
+      try {
+        const { data: meData } = await firstValueFrom(
+          this.httpService.get(`${baseUrl}/me`, {
+            params: { fields: 'id,name,category', access_token: accessToken },
+          }),
+        );
+        if (meData?.id) {
+          pageTargets.push({
+            id: meData.id,
+            name: meData.name || `Page ${meData.id}`,
+            token: accessToken,
+          });
+        }
+      } catch (e: any) {
+        this.logger.debug(`No se pudo resolver /me como página: ${e?.message}`);
+      }
+
+      // 2. Si el token es de usuario con acceso a varias páginas (/me/accounts)
+      try {
+        const { data: accountsData } = await firstValueFrom(
+          this.httpService.get(`${baseUrl}/me/accounts`, {
+            params: { fields: 'id,name,access_token', access_token: accessToken },
+          }),
+        );
+        if (Array.isArray(accountsData?.data)) {
+          for (const acc of accountsData.data) {
+            if (acc.id && !pageTargets.some((p) => p.id === acc.id)) {
+              pageTargets.push({
+                id: acc.id,
+                name: acc.name || `Page ${acc.id}`,
+                token: acc.access_token || accessToken,
+              });
+            }
+          }
+        }
+      } catch (e: any) {
+        // Ignorar si el token no tiene permisos de accounts o ya es Page Token
+      }
+    }
+
+    return pageTargets;
+  }
+
+  /**
+   * Obtiene todos los formularios de Lead Ads (Instant Forms) de una página específica con paginación.
+   */
+  private async fetchFormsForPage(page: { id: string; name: string; token: string }): Promise<any[]> {
+    const baseUrl = await this.getEffectiveBaseUrl();
+    let formsUrl: string | null = `${baseUrl}/${page.id}/leadgen_forms`;
+    let formsParams: Record<string, any> | undefined = {
+      fields: 'id,name,status,leads_count,created_time',
+      limit: 100,
+      access_token: page.token,
+    };
+
+    const allForms: any[] = [];
+    while (formsUrl && allForms.length < 200) {
+      const { data: fData }: { data: any } = await firstValueFrom(
+        this.httpService.get(formsUrl, { params: formsParams }),
+      );
+      if (Array.isArray(fData?.data)) {
+        allForms.push(...fData.data);
+      }
+      formsUrl = fData?.paging?.next ?? null;
+      formsParams = undefined;
+    }
+
+    return allForms;
+  }
+
+  /**
+   * Lista los formularios de Lead Ads (Instant Forms) asociados a las páginas de Meta.
+   */
+  async fetchPageLeadForms(pageId?: string): Promise<LeadForm[]> {
+    try {
+      const pageTargets = await this.resolvePageTargets(pageId);
+
+      if (pageTargets.length === 0) {
+        this.logger.warn('No se detectaron Páginas de Facebook asociadas al token para consultar formularios.');
+        return [];
+      }
+
+      const allLeadForms: LeadForm[] = [];
+
+      for (const page of pageTargets) {
+        this.logger.log(`Consultando formularios instantáneos para página ${page.name} (${page.id})...`);
+        try {
+          const forms = await this.fetchFormsForPage(page);
+          this.logger.log(`Encontrados ${forms.length} formularios en página ${page.name}.`);
+
+          for (const f of forms) {
+            const createdTime = f.created_time ? new Date(f.created_time) : null;
+            allLeadForms.push(
+              new LeadForm(
+                f.id,
+                f.name || `Form ${f.id}`,
+                f.status || 'ACTIVE',
+                Number(f.leads_count ?? 0),
+                page.id,
+                page.name,
+                createdTime && !Number.isNaN(createdTime.getTime()) ? createdTime : null,
+              ),
+            );
+          }
+        } catch (pageErr: any) {
+          const errMsg = pageErr?.response?.data?.error?.message ?? pageErr.message;
+          this.logger.warn(`No se pudieron extraer formularios para página ${page.id}: ${errMsg}`);
+        }
+      }
+
+      return allLeadForms;
+    } catch (error: any) {
+      if (error instanceof HttpException) {
+        throw error;
+      }
+      this.logger.error(`Error al listar formularios de Meta: ${error?.message || error}`);
+      return [];
+    }
+  }
+
+  /**
    * Extrae leads directamente desde los formularios instantáneos (Leadgen Forms)
    * de la(s) Página(s) de Facebook asociadas al token.
    */
   async fetchPageLeadgenFormsLeads(pageId?: string): Promise<RawMetaLead[]> {
-    const accessToken = await this.getCurrentAccessToken();
     const baseUrl = await this.getEffectiveBaseUrl();
 
     try {
-      const pageTargets: { id: string; name: string; token: string }[] = [];
-
-      if (pageId) {
-        pageTargets.push({ id: pageId, name: `Page ${pageId}`, token: accessToken });
-      } else {
-        // 1. Detectar si el token actual corresponde a una Página (/me)
-        try {
-          const { data: meData } = await firstValueFrom(
-            this.httpService.get(`${baseUrl}/me`, {
-              params: { fields: 'id,name,category', access_token: accessToken },
-            }),
-          );
-          if (meData?.id) {
-            pageTargets.push({
-              id: meData.id,
-              name: meData.name || `Page ${meData.id}`,
-              token: accessToken,
-            });
-          }
-        } catch (e: any) {
-          this.logger.debug(`No se pudo resolver /me como página: ${e?.message}`);
-        }
-
-        // 2. Si el token es de usuario con acceso a varias páginas (/me/accounts)
-        try {
-          const { data: accountsData } = await firstValueFrom(
-            this.httpService.get(`${baseUrl}/me/accounts`, {
-              params: { fields: 'id,name,access_token', access_token: accessToken },
-            }),
-          );
-          if (Array.isArray(accountsData?.data)) {
-            for (const acc of accountsData.data) {
-              if (acc.id && !pageTargets.some((p) => p.id === acc.id)) {
-                pageTargets.push({
-                  id: acc.id,
-                  name: acc.name || `Page ${acc.id}`,
-                  token: acc.access_token || accessToken,
-                });
-              }
-            }
-          }
-        } catch (e: any) {
-          // Ignorar si el token no tiene permisos de accounts o ya es Page Token
-        }
-      }
+      const pageTargets = await this.resolvePageTargets(pageId);
 
       if (pageTargets.length === 0) {
         this.logger.warn('No se detectaron Páginas de Facebook asociadas al token para consultar formularios.');
@@ -203,25 +294,7 @@ export class MetaGraphApiService implements IMetaGraphApiPort {
       for (const page of pageTargets) {
         this.logger.log(`Consultando formularios instantáneos para página ${page.name} (${page.id})...`);
         try {
-          let formsUrl: string | null = `${baseUrl}/${page.id}/leadgen_forms`;
-          let formsParams: Record<string, any> | undefined = {
-            fields: 'id,name,status,leads_count,created_time',
-            limit: 100,
-            access_token: page.token,
-          };
-
-          const allForms: any[] = [];
-          while (formsUrl && allForms.length < 200) {
-            const { data: fData }: { data: any } = await firstValueFrom(
-              this.httpService.get(formsUrl, { params: formsParams }),
-            );
-            if (Array.isArray(fData?.data)) {
-              allForms.push(...fData.data);
-            }
-            formsUrl = fData?.paging?.next ?? null;
-            formsParams = undefined;
-          }
-
+          const allForms = await this.fetchFormsForPage(page);
           this.logger.log(`Encontrados ${allForms.length} formularios en página ${page.name}.`);
 
           for (const form of allForms) {

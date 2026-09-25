@@ -1,8 +1,9 @@
-import { Body, Controller, Get, HttpCode, HttpStatus, Post } from '@nestjs/common';
+import { Body, Controller, Get, HttpCode, HttpStatus, Post, Query } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
 import { SyncCampaignsUseCase } from '../../application/use-cases/sync-campaigns.use-case';
 import { GetCampaignsUseCase } from '../../application/use-cases/get-campaigns.use-case';
 import { SyncMetaLeadsUseCase } from '../../application/use-cases/sync-meta-leads.use-case';
+import { GetLeadFormsUseCase } from '../../application/use-cases/get-lead-forms.use-case';
 import { SyncCampaignsDto } from '../../application/dtos/sync-campaigns.dto';
 import { SyncMetaLeadsDto } from '../../application/dtos/sync-meta-leads.dto';
 import { RequirePermissions } from '../../../auth/decorators/permissions.decorator';
@@ -15,6 +16,7 @@ export class CampaignsController {
     private readonly syncCampaignsUseCase: SyncCampaignsUseCase,
     private readonly getCampaignsUseCase: GetCampaignsUseCase,
     private readonly syncMetaLeadsUseCase: SyncMetaLeadsUseCase,
+    private readonly getLeadFormsUseCase: GetLeadFormsUseCase,
   ) {}
 
   @Post('sync')
@@ -68,4 +70,20 @@ export class CampaignsController {
       pageId: dto?.pageId,
     });
   }
+
+  @Get('leads/forms')
+  @RequirePermissions({
+    identificador: 'meta.leads.forms.list',
+    nombre: 'Listar formularios de leads de Meta',
+  })
+  @ApiOperation({
+    summary: 'Lista los formularios de Lead Ads activos, con su conteo de leads acumulados',
+  })
+  @ApiResponse({ status: 200, description: 'Formularios de Lead Ads recuperados exitosamente' })
+  @ApiResponse({ status: 401, description: 'Token de autenticación faltante o inválido' })
+  @ApiResponse({ status: 403, description: 'No posee los permisos requeridos' })
+  async listLeadForms(@Query('pageId') pageId?: string) {
+    return this.getLeadFormsUseCase.execute(pageId);
+  }
 }
+
