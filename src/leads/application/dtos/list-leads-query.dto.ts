@@ -15,6 +15,22 @@ export class ListLeadsQueryDto {
   @IsString()
   campaignId?: string;
 
+  @ApiPropertyOptional({ description: 'Filtrar por ID de provincia' })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  provinciaId?: number;
+
+  @ApiPropertyOptional({ description: 'Filtrar por ID de dependencia' })
+  @IsOptional()
+  @IsString()
+  dependenciaId?: string;
+
+  @ApiPropertyOptional({ description: 'Búsqueda por nombre, email, teléfono, cédula o campaña' })
+  @IsOptional()
+  @IsString()
+  search?: string;
+
   @ApiPropertyOptional({ example: '2026-01-01' })
   @IsOptional()
   @IsDateString()
@@ -48,4 +64,3 @@ export class ListLeadsQueryDto {
   @Max(200)
   limit?: number;
 }
-

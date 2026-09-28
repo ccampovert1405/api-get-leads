@@ -3,10 +3,6 @@ export enum LeadSource {
   TIKTOK = 'TIKTOK',
 }
 
-/**
- * rawPayload guarda la respuesta original de la plataforma (jsonb) para
- * trazabilidad/auditoría, sin forzar al dominio a conocer su forma exacta.
- */
 export class Lead {
   public readonly campaignId: string | null;
 
@@ -22,6 +18,17 @@ export class Lead {
     public readonly rawPayload: Record<string, unknown>,
     public readonly receivedAt: Date,
     public readonly createdAt: Date,
+    public readonly cedula: string | null = null,
+    public readonly submissionCount: number = 1,
+    public readonly ciudadDeclarada: string | null = null,
+    public readonly contactPreference: string | null = null,
+    public readonly idCanton: number | null = null,
+    public readonly idProvincia: number | null = null,
+    public readonly idDependencia: string | null = null,
+    public readonly lastSubmissionAt: Date | null = null,
+    public readonly canton: { id: number; nombre: string } | null = null,
+    public readonly provincia: { id: number; nombre: string } | null = null,
+    public readonly dependencia: { id: string; nombre: string; codigo?: string | null } | null = null,
   ) {
     this.campaignId = sourceCampaignId;
   }

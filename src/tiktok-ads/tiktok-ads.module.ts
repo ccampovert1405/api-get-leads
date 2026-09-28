@@ -18,6 +18,8 @@ import { TIKTOK_CAMPAIGN_REPOSITORY } from './domain/repositories/tiktok-campaig
 
 import { LeadsModule } from '../leads/leads.module';
 import { PlatformCredentialsModule } from '../platform-credentials/platform-credentials.module';
+import { GeoModule } from '../geo/geo.module';
+import { DependenciasModule } from '../dependencias/dependencias.module';
 
 @Module({
   imports: [
@@ -27,6 +29,8 @@ import { PlatformCredentialsModule } from '../platform-credentials/platform-cred
     TypeOrmModule.forFeature([TikTokCampaignOrmEntity]),
     LeadsModule, // provee LEAD_REPOSITORY para persistir los leads descargados
     PlatformCredentialsModule, // provee PLATFORM_CREDENTIAL_REPOSITORY para leer credenciales de TikTok
+    GeoModule, // provee GeoResolverService para normalización de provincias y cantones
+    DependenciasModule, // provee DEPENDENCIA_REPOSITORY para asignación de sucursales
   ],
   controllers: [TikTokCampaignsController, TikTokLeadsController],
   providers: [

@@ -10,6 +10,9 @@ export interface RawLeadRow {
   phone: string | null;
   receivedAt: Date;
   rawPayload: Record<string, unknown>;
+  cedula?: string | null;
+  ciudadDeclarada?: string | null;
+  contactPreference?: string | null;
 }
 
 /**

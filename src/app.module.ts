@@ -15,6 +15,8 @@ import { TikTokAdsModule } from './tiktok-ads/tiktok-ads.module';
 import { LeadsModule } from './leads/leads.module';
 import { PlatformCredentialsModule } from './platform-credentials/platform-credentials.module';
 import { SyncScheduleModule } from './sync-schedules/sync-schedule.module';
+import { GeoModule } from './geo/geo.module';
+import { DependenciasModule } from './dependencias/dependencias.module';
 
 import { JwtAuthGuard } from './auth/infrastructure/guards/jwt-auth.guard';
 import { PermissionsGuard } from './auth/guards/permissions.guard';
@@ -29,6 +31,9 @@ import { LeadOrmEntity } from './leads/infrastructure/persistence/entities/lead.
 import { PlatformCredentialOrmEntity } from './platform-credentials/infrastructure/persistence/entities/platform-credential.orm-entity';
 import { SyncScheduleOrmEntity } from './sync-schedules/infrastructure/persistence/entities/sync-schedule.orm-entity';
 import { SyncExecutionLogOrmEntity } from './sync-schedules/infrastructure/persistence/entities/sync-execution-log.orm-entity';
+import { ProvinciaOrmEntity } from './geo/entities/provincia.orm-entity';
+import { CantonOrmEntity } from './geo/entities/canton.orm-entity';
+import { DependenciaOrmEntity } from './dependencias/infrastructure/persistence/entities/dependencia.orm-entity';
 
 import { GlobalExceptionFilter } from './common/filters/global-exception.filter';
 import { LoggingInterceptor } from './common/interceptors/logging.interceptor';
@@ -76,6 +81,9 @@ import { HealthController } from './common/health/health.controller';
           PlatformCredentialOrmEntity,
           SyncScheduleOrmEntity,
           SyncExecutionLogOrmEntity,
+          ProvinciaOrmEntity,
+          CantonOrmEntity,
+          DependenciaOrmEntity,
         ],
         // CRÍTICO en producción: el esquema se gestiona solo vía migraciones,
         // nunca con sincronización automática (riesgo de pérdida de datos).
@@ -94,6 +102,8 @@ import { HealthController } from './common/health/health.controller';
     LeadsModule,
     PlatformCredentialsModule,
     SyncScheduleModule,
+    GeoModule,
+    DependenciasModule,
   ],
   controllers: [HealthController],
   providers: [
