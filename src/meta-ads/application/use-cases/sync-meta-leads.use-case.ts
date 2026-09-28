@@ -1,15 +1,14 @@
-import { Inject, Injectable, Logger } from '@nestjs/common';
-import { IMetaGraphApiPort, META_GRAPH_API_PORT } from '../ports/meta-graph-api.port';
-import {
-  ICampaignRepository,
-  CAMPAIGN_REPOSITORY,
-} from '../../domain/repositories/campaign.repository.interface';
-import {
-  ILeadRepository,
-  LEAD_REPOSITORY,
-} from '../../../leads/domain/repositories/lead.repository.interface';
+import { Injectable, Inject, Logger } from '@nestjs/common';
+import { IMetaGraphApiPort, META_GRAPH_API_PORT, RawMetaLead } from '../ports/meta-graph-api.port';
+import { ICampaignRepository, CAMPAIGN_REPOSITORY } from '../../domain/repositories/campaign.repository.interface';
+import { ILeadRepository, LEAD_REPOSITORY } from '../../../leads/domain/repositories/lead.repository.interface';
 import { Lead, LeadSource } from '../../../leads/domain/entities/lead.entity';
 import { SyncCampaignsUseCase } from './sync-campaigns.use-case';
+import { GeoResolverService } from '../../../geo/services/geo-resolver.service';
+import {
+  IDependenciaRepository,
+  DEPENDENCIA_REPOSITORY,
+} from '../../../dependencias/domain/repositories/dependencia.repository.interface';
 
 export interface SyncMetaLeadsResult {
   campaignsChecked: number;
@@ -25,6 +24,8 @@ export class SyncMetaLeadsUseCase {
     @Inject(META_GRAPH_API_PORT) private readonly metaGraphApi: IMetaGraphApiPort,
     @Inject(CAMPAIGN_REPOSITORY) private readonly campaignRepository: ICampaignRepository,
     @Inject(LEAD_REPOSITORY) private readonly leadRepository: ILeadRepository,
+    @Inject(DEPENDENCIA_REPOSITORY) private readonly dependenciaRepository: IDependenciaRepository,
+    private readonly geoResolver: GeoResolverService,
     private readonly syncCampaignsUseCase: SyncCampaignsUseCase,
   ) {}
 
@@ -43,7 +44,7 @@ export class SyncMetaLeadsUseCase {
           await this.syncCampaignsUseCase.execute(params?.adAccountId);
           localCampaigns = await this.campaignRepository.findAll();
         } catch (campErr: any) {
-          this.logger.warn(`No se pudieron sincronizar campañas de cuenta publicitaria: ${campErr?.message || campErr}`);
+          this.logger.warn(`No se pudieron sincronizar campañas previas: ${campErr?.message || campErr}`);
         }
       }
 
@@ -62,6 +63,7 @@ export class SyncMetaLeadsUseCase {
           for (const row of rawLeads) {
             if (!seenLeadIds.has(row.sourceLeadId)) {
               seenLeadIds.add(row.sourceLeadId);
+              const geo = await this.resolveGeoAndDependencia(row.ciudadDeclarada);
               allLeads.push(
                 new Lead(
                   '', // id generado por BD
@@ -75,6 +77,13 @@ export class SyncMetaLeadsUseCase {
                   row.rawPayload,
                   row.receivedAt,
                   new Date(),
+                  row.cedula ?? null,
+                  1,
+                  row.ciudadDeclarada ?? null,
+                  row.contactPreference ?? null,
+                  geo.idCanton,
+                  geo.idProvincia,
+                  geo.idDependencia,
                 ),
               );
             }
@@ -92,6 +101,7 @@ export class SyncMetaLeadsUseCase {
       for (const row of formsLeads) {
         if (!seenLeadIds.has(row.sourceLeadId)) {
           seenLeadIds.add(row.sourceLeadId);
+          const geo = await this.resolveGeoAndDependencia(row.ciudadDeclarada);
           allLeads.push(
             new Lead(
               '', // id generado por BD
@@ -105,6 +115,13 @@ export class SyncMetaLeadsUseCase {
               row.rawPayload,
               row.receivedAt,
               new Date(),
+              row.cedula ?? null,
+              1,
+              row.ciudadDeclarada ?? null,
+              row.contactPreference ?? null,
+              geo.idCanton,
+              geo.idProvincia,
+              geo.idDependencia,
             ),
           );
         }
@@ -124,17 +141,45 @@ export class SyncMetaLeadsUseCase {
       };
     }
 
-    const { inserted } = await this.leadRepository.saveMany(allLeads);
+    const { inserted, updated } = await this.leadRepository.saveMany(allLeads);
 
     this.logger.log(
       `Sincronización de leads Meta completada exitosamente: ${campaignIdsToQuery.length} campañas revisadas, ` +
-        `${allLeads.length} leads obtenidos, ${inserted} persistidos en base de datos.`,
+        `${allLeads.length} leads obtenidos, ${inserted} nuevos persistidos, ${updated} actualizados/recurrentes en base de datos.`,
     );
 
     return {
       campaignsChecked: campaignIdsToQuery.length,
       leadsFetched: allLeads.length,
-      leadsSaved: inserted,
+      leadsSaved: inserted + updated,
+    };
+  }
+
+  private async resolveGeoAndDependencia(ciudadDeclarada?: string | null): Promise<{
+    idCanton: number | null;
+    idProvincia: number | null;
+    idDependencia: string | null;
+  }> {
+    if (!ciudadDeclarada) {
+      return { idCanton: null, idProvincia: null, idDependencia: null };
+    }
+
+    const geo = await this.geoResolver.resolveLocation(ciudadDeclarada);
+    let idDependencia: string | null = null;
+
+    if (geo.provinciaId) {
+      const deps = await this.dependenciaRepository.findByProvincia(geo.provinciaId);
+      if (deps.length > 0) {
+        // Si hay una dependencia específica en el mismo cantón, seleccionarla
+        const cantonMatch = geo.cantonId ? deps.find((d) => Number(d.idCanton) === geo.cantonId) : null;
+        idDependencia = cantonMatch ? cantonMatch.id : deps[0].id;
+      }
+    }
+
+    return {
+      idCanton: geo.cantonId,
+      idProvincia: geo.provinciaId,
+      idDependencia,
     };
   }
 }

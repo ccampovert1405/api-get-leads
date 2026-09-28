@@ -7,6 +7,9 @@ export interface RawMetaLead {
   formId?: string | null;
   formName?: string | null;
   fullName?: string | null;
+  cedula?: string | null;
+  ciudadDeclarada?: string | null;
+  contactPreference?: string | null;
   email?: string | null;
   phone?: string | null;
   receivedAt: Date;

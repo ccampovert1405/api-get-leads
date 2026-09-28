@@ -11,6 +11,9 @@ import { PlatformCredentialOrmEntity } from '../platform-credentials/infrastruct
 import { SyncScheduleOrmEntity } from '../sync-schedules/infrastructure/persistence/entities/sync-schedule.orm-entity';
 import { SyncExecutionLogOrmEntity } from '../sync-schedules/infrastructure/persistence/entities/sync-execution-log.orm-entity';
 import { MenuOrmEntity } from '../menus/entities/menu.orm-entity';
+import { ProvinciaOrmEntity } from '../geo/entities/provincia.orm-entity';
+import { CantonOrmEntity } from '../geo/entities/canton.orm-entity';
+import { DependenciaOrmEntity } from '../dependencias/infrastructure/persistence/entities/dependencia.orm-entity';
 
 dotenv.config();
 
@@ -36,6 +39,9 @@ export const AppDataSource = new DataSource({
     PlatformCredentialOrmEntity,
     SyncScheduleOrmEntity,
     SyncExecutionLogOrmEntity,
+    ProvinciaOrmEntity,
+    CantonOrmEntity,
+    DependenciaOrmEntity,
   ],
   migrations: [__dirname + '/migrations/*.{ts,js}'],
   migrationsTableName: 'migrations_history',

@@ -16,7 +16,7 @@ export class LeadsController {
     identificador: 'leads.list',
     nombre: 'Listar Leads Paginados',
   })
-  @ApiOperation({ summary: 'Lista leads (Meta y/o TikTok) con filtros y paginación' })
+  @ApiOperation({ summary: 'Lista leads (Meta y/o TikTok) con filtros geográficos, dependencias y paginación' })
   @ApiResponse({ status: 200, description: 'Leads recuperados exitosamente' })
   @ApiResponse({ status: 401, description: 'Token de autenticación faltante o inválido' })
   @ApiResponse({ status: 403, description: 'No posee los permisos requeridos' })
@@ -25,6 +25,9 @@ export class LeadsController {
     const { items, total } = await this.leadRepository.findAll({
       source: query.source,
       campaignId: query.campaignId,
+      provinciaId: query.provinciaId,
+      dependenciaId: query.dependenciaId,
+      search: query.search,
       from: query.from ? new Date(query.from) : undefined,
       to: query.to ? new Date(query.to) : undefined,
       page: query.page,
@@ -53,22 +56,48 @@ export class LeadsController {
     const { items } = await this.leadRepository.findAll({
       source: query.source,
       campaignId: query.campaignId,
+      provinciaId: query.provinciaId,
+      dependenciaId: query.dependenciaId,
+      search: query.search,
       from: query.from ? new Date(query.from) : undefined,
       to: query.to ? new Date(query.to) : undefined,
       page: 1,
       pageSize: 5000,
     });
 
-    const header = ['source', 'sourceLeadId', 'campaignId', 'formName', 'fullName', 'email', 'phone', 'receivedAt'];
+    const header = [
+      'source',
+      'sourceLeadId',
+      'cedula',
+      'fullName',
+      'email',
+      'phone',
+      'submissionCount',
+      'contactPreference',
+      'ciudadDeclarada',
+      'provincia',
+      'canton',
+      'dependencia',
+      'campaignId',
+      'formName',
+      'receivedAt',
+    ];
     const rows = items.map((l) =>
       [
         l.source,
         l.sourceLeadId,
-        l.sourceCampaignId ?? '',
-        l.formName ?? '',
+        l.cedula ?? '',
         l.fullName ?? '',
         l.email ?? '',
         l.phone ?? '',
+        l.submissionCount,
+        l.contactPreference ?? '',
+        l.ciudadDeclarada ?? '',
+        l.provincia?.nombre ?? '',
+        l.canton?.nombre ?? '',
+        l.dependencia?.nombre ?? '',
+        l.sourceCampaignId ?? '',
+        l.formName ?? '',
         l.receivedAt.toISOString(),
       ]
         .map((v) => `"${String(v).replace(/"/g, '""')}"`)

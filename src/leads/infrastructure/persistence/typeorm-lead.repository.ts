@@ -16,51 +16,126 @@ export class TypeOrmLeadRepository implements ILeadRepository {
   ) {}
 
   async save(lead: Lead): Promise<void> {
-    await this.withRetry(() =>
-      this.repo.upsert(LeadMapper.toOrm(lead), ['source', 'sourceLeadId']),
-    );
+    await this.withRetry(async () => {
+      if (lead.cedula && lead.cedula.trim().length >= 5) {
+        const existing = await this.repo.findOne({ where: { cedula: lead.cedula.trim() } });
+        if (existing) {
+          await this.repo.update(existing.id, {
+            submissionCount: (existing.submissionCount || 1) + 1,
+            lastSubmissionAt: lead.receivedAt,
+            formName: lead.formName || existing.formName,
+            rawPayload: lead.rawPayload as Record<string, any>,
+            contactPreference: lead.contactPreference || existing.contactPreference,
+            idProvincia: lead.idProvincia || existing.idProvincia,
+            idCanton: lead.idCanton || existing.idCanton,
+            idDependencia: lead.idDependencia || existing.idDependencia,
+            fullName: lead.fullName || existing.fullName,
+            phone: lead.phone || existing.phone,
+            email: lead.email || existing.email,
+          });
+          return;
+        }
+      }
+
+      await this.repo.upsert(LeadMapper.toOrm(lead), ['source', 'sourceLeadId']);
+    });
   }
 
   /**
-   * Idempotente por diseño: upsert por [source, source_lead_id].
-   * Procesa en bloques de 500 para no exceder los límites de parámetros en PostgreSQL.
+   * Idempotente y deduplicador por cédula:
+   * Si la cédula ya existe, actualiza el registro e incrementa el submission_count.
+   * Si no existe cédula o es nueva, inserta el lead.
    */
-  async saveMany(leads: Lead[]): Promise<{ inserted: number; skipped: number }> {
+  async saveMany(leads: Lead[]): Promise<{ inserted: number; skipped: number; updated: number }> {
     if (leads.length === 0) {
-      return { inserted: 0, skipped: 0 };
+      return { inserted: 0, skipped: 0, updated: 0 };
     }
 
-    const ormEntities = leads.map((l) => LeadMapper.toOrm(l));
-    const CHUNK_SIZE = 500;
+    let inserted = 0;
+    let updated = 0;
 
-    for (let i = 0; i < ormEntities.length; i += CHUNK_SIZE) {
-      const chunk = ormEntities.slice(i, i + CHUNK_SIZE);
-      await this.withRetry(() =>
-        this.repo.upsert(chunk, ['source', 'sourceLeadId']),
-      );
+    for (const lead of leads) {
+      try {
+        if (lead.cedula && lead.cedula.trim().length >= 5) {
+          const cleanCedula = lead.cedula.trim();
+          const existing = await this.repo.findOne({ where: { cedula: cleanCedula } });
+          if (existing) {
+            // Ya existe un lead con esta cédula: no insertamos uno nuevo, incrementamos contador
+            await this.repo.update(existing.id, {
+              submissionCount: (existing.submissionCount || 1) + 1,
+              lastSubmissionAt: lead.receivedAt,
+              formName: lead.formName || existing.formName,
+              rawPayload: lead.rawPayload as Record<string, any>,
+              contactPreference: lead.contactPreference || existing.contactPreference,
+              idProvincia: lead.idProvincia || existing.idProvincia,
+              idCanton: lead.idCanton || existing.idCanton,
+              idDependencia: lead.idDependencia || existing.idDependencia,
+              fullName: lead.fullName || existing.fullName,
+              phone: lead.phone || existing.phone,
+              email: lead.email || existing.email,
+            });
+            updated++;
+            continue;
+          }
+        }
+
+        // Si no existe cédula o es nueva, hacemos upsert por source + sourceLeadId
+        await this.withRetry(() =>
+          this.repo.upsert(LeadMapper.toOrm(lead), ['source', 'sourceLeadId']),
+        );
+        inserted++;
+      } catch (err: any) {
+        this.logger.warn(`Error al procesar lead ${lead.sourceLeadId}: ${err?.message || err}`);
+      }
     }
 
-    return { inserted: leads.length, skipped: 0 };
+    return { inserted, skipped: 0, updated };
   }
 
   async findBySourceLeadId(source: LeadSource, sourceLeadId: string): Promise<Lead | null> {
-    const found = await this.repo.findOne({ where: { source, sourceLeadId } });
+    const found = await this.repo.findOne({
+      where: { source, sourceLeadId },
+      relations: ['provincia', 'canton', 'dependencia'],
+    });
+    return found ? LeadMapper.toDomain(found) : null;
+  }
+
+  async findByCedula(cedula: string): Promise<Lead | null> {
+    const found = await this.repo.findOne({
+      where: { cedula: cedula.trim() },
+      relations: ['provincia', 'canton', 'dependencia'],
+    });
     return found ? LeadMapper.toDomain(found) : null;
   }
 
   async findAll(filters: LeadListFilters): Promise<{ items: Lead[]; total: number }> {
     const page = filters.page ?? 1;
-    // Permite hasta 5000 filas para exportaciones y hasta 200 para paginación regular
     const maxAllowed = (filters.pageSize ?? 50) > 200 ? 5000 : 200;
     const pageSize = Math.min(filters.pageSize ?? 50, maxAllowed);
 
-    const qb = this.repo.createQueryBuilder('lead');
+    const qb = this.repo.createQueryBuilder('lead')
+      .leftJoinAndSelect('lead.provincia', 'provincia')
+      .leftJoinAndSelect('lead.canton', 'canton')
+      .leftJoinAndSelect('lead.dependencia', 'dependencia');
 
     if (filters.source) {
       qb.andWhere('lead.source = :source', { source: filters.source });
     }
     if (filters.campaignId) {
       qb.andWhere('lead.sourceCampaignId = :campaignId', { campaignId: filters.campaignId });
+    }
+    if (filters.provinciaId) {
+      qb.andWhere('lead.idProvincia = :provinciaId', { provinciaId: filters.provinciaId });
+    }
+    if (filters.dependenciaId) {
+      qb.andWhere('lead.idDependencia = :dependenciaId', { dependenciaId: filters.dependenciaId });
+    }
+    if (filters.search) {
+      const term = `%${filters.search.toLowerCase()}%`;
+      qb.andWhere(
+        '(LOWER(lead.fullName) LIKE :term OR LOWER(lead.email) LIKE :term OR lead.phone LIKE :term OR lead.cedula LIKE :term OR lead.sourceCampaignId LIKE :term OR LOWER(lead.formName) LIKE :term)',
+        { term },
+      );
     }
     if (filters.from) {
       qb.andWhere('lead.receivedAt >= :from', { from: filters.from });

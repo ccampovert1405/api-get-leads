@@ -18,6 +18,8 @@ import { CAMPAIGN_REPOSITORY } from './domain/repositories/campaign.repository.i
 
 import { PlatformCredentialsModule } from '../platform-credentials/platform-credentials.module';
 import { LeadsModule } from '../leads/leads.module';
+import { GeoModule } from '../geo/geo.module';
+import { DependenciasModule } from '../dependencias/dependencias.module';
 
 @Module({
   imports: [
@@ -26,6 +28,8 @@ import { LeadsModule } from '../leads/leads.module';
     TypeOrmModule.forFeature([CampaignOrmEntity]),
     PlatformCredentialsModule, // provee PLATFORM_CREDENTIAL_REPOSITORY para leer el token vigente
     LeadsModule, // provee LEAD_REPOSITORY para persistir los leads de Meta
+    GeoModule, // provee GeoResolverService
+    DependenciasModule, // provee DEPENDENCIA_REPOSITORY
   ],
   controllers: [CampaignsController],
   providers: [
