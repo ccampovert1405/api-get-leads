@@ -1,6 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { In, Repository } from 'typeorm';
 import { ILeadRepository, LeadListFilters } from '../../domain/repositories/lead.repository.interface';
 import { Lead, LeadSource } from '../../domain/entities/lead.entity';
 import { LeadOrmEntity } from './entities/lead.orm-entity';
@@ -46,13 +46,14 @@ export class TypeOrmLeadRepository implements ILeadRepository {
    * Si la cédula ya existe, actualiza el registro e incrementa el submission_count.
    * Si no existe cédula o es nueva, inserta el lead.
    */
-  async saveMany(leads: Lead[]): Promise<{ inserted: number; skipped: number; updated: number }> {
+  async saveMany(leads: Lead[]): Promise<{ inserted: number; skipped: number; updated: number; savedIds: string[] }> {
     if (leads.length === 0) {
-      return { inserted: 0, skipped: 0, updated: 0 };
+      return { inserted: 0, skipped: 0, updated: 0, savedIds: [] };
     }
 
     let inserted = 0;
     let updated = 0;
+    const savedIds: string[] = [];
 
     for (const lead of leads) {
       try {
@@ -75,6 +76,7 @@ export class TypeOrmLeadRepository implements ILeadRepository {
               email: lead.email || existing.email,
             });
             updated++;
+            savedIds.push(existing.id);
             continue;
           }
         }
@@ -84,12 +86,34 @@ export class TypeOrmLeadRepository implements ILeadRepository {
           this.repo.upsert(LeadMapper.toOrm(lead), ['source', 'sourceLeadId']),
         );
         inserted++;
+
+        const savedRecord = await this.repo.findOne({
+          where: { source: lead.source, sourceLeadId: lead.sourceLeadId },
+          select: ['id'],
+        });
+        if (savedRecord) {
+          savedIds.push(savedRecord.id);
+        }
       } catch (err: any) {
         this.logger.warn(`Error al procesar lead ${lead.sourceLeadId}: ${err?.message || err}`);
       }
     }
 
-    return { inserted, skipped: 0, updated };
+    return { inserted, skipped: 0, updated, savedIds };
+  }
+
+  async findByIds(ids: string[]): Promise<Lead[]> {
+    if (!ids || ids.length === 0) {
+      return [];
+    }
+
+    const records = await this.repo.find({
+      where: { id: In(ids) },
+      relations: ['provincia', 'canton', 'dependencia'],
+      order: { receivedAt: 'DESC' },
+    });
+
+    return records.map((r) => LeadMapper.toDomain(r));
   }
 
   async findBySourceLeadId(source: LeadSource, sourceLeadId: string): Promise<Lead | null> {

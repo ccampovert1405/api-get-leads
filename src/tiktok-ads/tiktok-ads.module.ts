@@ -40,6 +40,6 @@ import { DependenciasModule } from '../dependencias/dependencias.module';
     { provide: TIKTOK_API_PORT, useClass: TikTokApiService },
     { provide: TIKTOK_CAMPAIGN_REPOSITORY, useClass: TypeOrmTikTokCampaignRepository },
   ],
-  exports: [SyncTikTokCampaignsUseCase],
+  exports: [SyncTikTokCampaignsUseCase, DownloadTikTokLeadsUseCase],
 })
 export class TikTokAdsModule {}

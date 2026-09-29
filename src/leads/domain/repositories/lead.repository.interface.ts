@@ -14,9 +14,10 @@ export interface LeadListFilters {
 
 export interface ILeadRepository {
   save(lead: Lead): Promise<void>;
-  saveMany(leads: Lead[]): Promise<{ inserted: number; skipped: number; updated: number }>;
+  saveMany(leads: Lead[]): Promise<{ inserted: number; skipped: number; updated: number; savedIds: string[] }>;
   findBySourceLeadId(source: LeadSource, sourceLeadId: string): Promise<Lead | null>;
   findByCedula(cedula: string): Promise<Lead | null>;
+  findByIds(ids: string[]): Promise<Lead[]>;
   findAll(filters: LeadListFilters): Promise<{ items: Lead[]; total: number }>;
 }
 

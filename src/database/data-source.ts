@@ -14,6 +14,8 @@ import { MenuOrmEntity } from '../menus/entities/menu.orm-entity';
 import { ProvinciaOrmEntity } from '../geo/entities/provincia.orm-entity';
 import { CantonOrmEntity } from '../geo/entities/canton.orm-entity';
 import { DependenciaOrmEntity } from '../dependencias/infrastructure/persistence/entities/dependencia.orm-entity';
+import { WebhookConfigOrmEntity } from '../webhooks/infrastructure/persistence/entities/webhook-config.orm-entity';
+import { WebhookDeliveryLogOrmEntity } from '../webhooks/infrastructure/persistence/entities/webhook-delivery-log.orm-entity';
 
 dotenv.config();
 
@@ -42,6 +44,8 @@ export const AppDataSource = new DataSource({
     ProvinciaOrmEntity,
     CantonOrmEntity,
     DependenciaOrmEntity,
+    WebhookConfigOrmEntity,
+    WebhookDeliveryLogOrmEntity,
   ],
   migrations: [__dirname + '/migrations/*.{ts,js}'],
   migrationsTableName: 'migrations_history',
