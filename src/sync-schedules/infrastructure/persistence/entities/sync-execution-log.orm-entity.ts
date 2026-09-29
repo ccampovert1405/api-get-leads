@@ -43,6 +43,9 @@ export class SyncExecutionLogOrmEntity {
   @Column({ name: 'tiktok_campaigns_synced', type: 'integer', default: 0 })
   tiktokCampaignsSynced: number;
 
+  @Column({ name: 'tiktok_leads_synced', type: 'integer', default: 0 })
+  tiktokLeadsSynced: number;
+
   @Column({ name: 'details', type: 'jsonb', nullable: true })
   details: Record<string, any> | null;
 

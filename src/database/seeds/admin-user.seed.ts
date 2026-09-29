@@ -3,6 +3,7 @@ import { DataSource } from 'typeorm';
 import { UserOrmEntity } from '../../auth/infrastructure/persistence/entities/user.orm-entity';
 import { RoleOrmEntity } from '../../roles/entities/role.orm-entity';
 import { MenuOrmEntity } from '../../menus/entities/menu.orm-entity';
+import { PermissionOrmEntity } from '../../permissions/entities/permission.orm-entity';
 import { SyncScheduleOrmEntity } from '../../sync-schedules/infrastructure/persistence/entities/sync-schedule.orm-entity';
 
 const SALT_ROUNDS = Number(process.env.BCRYPT_SALT_ROUNDS ?? 12);
@@ -33,6 +34,7 @@ export async function seedAdminUser(dataSource: DataSource): Promise<void> {
   const roleRepo = dataSource.getRepository(RoleOrmEntity);
   const userRepo = dataSource.getRepository(UserOrmEntity);
   const menuRepo = dataSource.getRepository(MenuOrmEntity);
+  const permissionRepo = dataSource.getRepository(PermissionOrmEntity);
   const syncScheduleRepo = dataSource.getRepository(SyncScheduleOrmEntity);
 
   // 1. Asegurar catálogo de Menús base
@@ -49,10 +51,11 @@ export async function seedAdminUser(dataSource: DataSource): Promise<void> {
   const username = process.env.SEED_ADMIN_USERNAME ?? 'administrator';
   const plainPassword = process.env.SEED_ADMIN_PASSWORD ?? '4dmin2026&&';
 
-  // 2. Asegurar rol "Super Administrador" con todos los menús
+  // 2. Asegurar rol "Super Administrador" con todos los menús y permisos
+  const allPermissions = await permissionRepo.find();
   let superRole = await roleRepo.findOne({
     where: { nombreRol: 'Super Administrador' },
-    relations: { menus: true },
+    relations: { menus: true, permisos: true },
   });
   if (!superRole) {
     superRole = await roleRepo.save(
@@ -60,19 +63,31 @@ export async function seedAdminUser(dataSource: DataSource): Promise<void> {
         nombreRol: 'Super Administrador',
         descripcion: 'Acceso total y sin restricciones a todos los recursos del sistema',
         menus: allMenus,
+        permisos: allPermissions,
       }),
     );
-    console.log('[seed] Rol "Super Administrador" creado con menús completos.');
+    console.log('[seed] Rol "Super Administrador" creado con menús y permisos completos.');
   } else {
     // Vincular cualquier menú nuevo no asignado
     const existingMenuIds = new Set(superRole.menus?.map((m) => m.id) || []);
     const missingMenus = allMenus.filter((m) => !existingMenuIds.has(m.id));
     if (missingMenus.length > 0) {
       superRole.menus = [...(superRole.menus || []), ...missingMenus];
-      await roleRepo.save(superRole);
       console.log(`[seed] Se asociaron ${missingMenus.length} nuevos menús a "Super Administrador".`);
     }
-    console.log('[seed] Rol "Super Administrador" ya existe. Se mantiene sin modificaciones.');
+
+    // Vincular cualquier permiso nuevo no asignado
+    const existingPermIds = new Set(superRole.permisos?.map((p) => p.permisoId) || []);
+    const missingPerms = allPermissions.filter((p) => !existingPermIds.has(p.permisoId));
+    if (missingPerms.length > 0) {
+      superRole.permisos = [...(superRole.permisos || []), ...missingPerms];
+      console.log(`[seed] Se asociaron ${missingPerms.length} nuevos permisos a "Super Administrador".`);
+    }
+
+    if (missingMenus.length > 0 || missingPerms.length > 0) {
+      await roleRepo.save(superRole);
+    }
+    console.log('[seed] Rol "Super Administrador" verificado y sincronizado.');
   }
 
   // 3. Asegurar rol "Analista" con menús operacionales y de consulta

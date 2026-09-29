@@ -14,6 +14,7 @@ export interface SyncMetaLeadsResult {
   campaignsChecked: number;
   leadsFetched: number;
   leadsSaved: number;
+  processedLeadIds: string[];
 }
 
 @Injectable()
@@ -138,10 +139,11 @@ export class SyncMetaLeadsUseCase {
         campaignsChecked: campaignIdsToQuery.length,
         leadsFetched: 0,
         leadsSaved: 0,
+        processedLeadIds: [],
       };
     }
 
-    const { inserted, updated } = await this.leadRepository.saveMany(allLeads);
+    const { inserted, updated, savedIds } = await this.leadRepository.saveMany(allLeads);
 
     this.logger.log(
       `Sincronización de leads Meta completada exitosamente: ${campaignIdsToQuery.length} campañas revisadas, ` +
@@ -152,6 +154,7 @@ export class SyncMetaLeadsUseCase {
       campaignsChecked: campaignIdsToQuery.length,
       leadsFetched: allLeads.length,
       leadsSaved: inserted + updated,
+      processedLeadIds: savedIds || [],
     };
   }
 

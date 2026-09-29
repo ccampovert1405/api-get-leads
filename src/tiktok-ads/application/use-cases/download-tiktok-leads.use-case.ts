@@ -25,6 +25,7 @@ export interface DownloadLeadsResult {
   inserted: number;
   updated: number;
   skipped: number;
+  processedLeadIds: string[];
 }
 
 @Injectable()
@@ -78,12 +79,19 @@ export class DownloadTikTokLeadsUseCase {
       );
     }
 
-    const { inserted, updated } = await this.leadRepository.saveMany(leads);
+    const { inserted, updated, savedIds } = await this.leadRepository.saveMany(leads);
     this.logger.log(
       `Leads TikTok persistidos: ${inserted} nuevos, ${updated} actualizados (deduplicados por cédula/id).`,
     );
 
-    return { taskId, fetched: rows.length, inserted, updated, skipped: rows.length - (inserted + updated) };
+    return {
+      taskId,
+      fetched: rows.length,
+      inserted,
+      updated,
+      skipped: rows.length - (inserted + updated),
+      processedLeadIds: savedIds || [],
+    };
   }
 
   private async resolveGeoAndDependencia(ciudadDeclarada?: string | null): Promise<{

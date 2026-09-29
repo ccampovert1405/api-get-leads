@@ -17,6 +17,7 @@ import { PlatformCredentialsModule } from './platform-credentials/platform-crede
 import { SyncScheduleModule } from './sync-schedules/sync-schedule.module';
 import { GeoModule } from './geo/geo.module';
 import { DependenciasModule } from './dependencias/dependencias.module';
+import { WebhooksModule } from './webhooks/webhooks.module';
 
 import { JwtAuthGuard } from './auth/infrastructure/guards/jwt-auth.guard';
 import { PermissionsGuard } from './auth/guards/permissions.guard';
@@ -34,6 +35,8 @@ import { SyncExecutionLogOrmEntity } from './sync-schedules/infrastructure/persi
 import { ProvinciaOrmEntity } from './geo/entities/provincia.orm-entity';
 import { CantonOrmEntity } from './geo/entities/canton.orm-entity';
 import { DependenciaOrmEntity } from './dependencias/infrastructure/persistence/entities/dependencia.orm-entity';
+import { WebhookConfigOrmEntity } from './webhooks/infrastructure/persistence/entities/webhook-config.orm-entity';
+import { WebhookDeliveryLogOrmEntity } from './webhooks/infrastructure/persistence/entities/webhook-delivery-log.orm-entity';
 
 import { GlobalExceptionFilter } from './common/filters/global-exception.filter';
 import { LoggingInterceptor } from './common/interceptors/logging.interceptor';
@@ -84,6 +87,8 @@ import { HealthController } from './common/health/health.controller';
           ProvinciaOrmEntity,
           CantonOrmEntity,
           DependenciaOrmEntity,
+          WebhookConfigOrmEntity,
+          WebhookDeliveryLogOrmEntity,
         ],
         // CRÍTICO en producción: el esquema se gestiona solo vía migraciones,
         // nunca con sincronización automática (riesgo de pérdida de datos).
@@ -104,6 +109,7 @@ import { HealthController } from './common/health/health.controller';
     SyncScheduleModule,
     GeoModule,
     DependenciasModule,
+    WebhooksModule,
   ],
   controllers: [HealthController],
   providers: [

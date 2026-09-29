@@ -4,6 +4,7 @@ import {
   OnApplicationBootstrap,
   ConflictException,
   NotFoundException,
+  Inject,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
@@ -16,6 +17,15 @@ import { UpdateSyncScheduleDto } from '../dtos/update-sync-schedule.dto';
 import { SyncCampaignsUseCase } from '../../../meta-ads/application/use-cases/sync-campaigns.use-case';
 import { SyncMetaLeadsUseCase } from '../../../meta-ads/application/use-cases/sync-meta-leads.use-case';
 import { SyncTikTokCampaignsUseCase } from '../../../tiktok-ads/application/use-cases/sync-tiktok-campaigns.use-case';
+import { DownloadTikTokLeadsUseCase } from '../../../tiktok-ads/application/use-cases/download-tiktok-leads.use-case';
+import { ILeadRepository, LEAD_REPOSITORY } from '../../../leads/domain/repositories/lead.repository.interface';
+import { WebhookConfigService } from '../../../webhooks/application/services/webhook-config.service';
+import { WebhookDispatcherService } from '../../../webhooks/application/services/webhook-dispatcher.service';
+import {
+  IPlatformCredentialRepository,
+  PLATFORM_CREDENTIAL_REPOSITORY,
+} from '../../../platform-credentials/domain/repositories/platform-credential.repository.interface';
+import { Platform } from '../../../platform-credentials/domain/entities/platform-credential.entity';
 
 export const SYNC_CRON_JOB_NAME = 'campaigns-and-leads-sync-job';
 
@@ -33,6 +43,13 @@ export class SyncScheduleService implements OnApplicationBootstrap {
     private readonly syncMetaCampaignsUseCase: SyncCampaignsUseCase,
     private readonly syncMetaLeadsUseCase: SyncMetaLeadsUseCase,
     private readonly syncTikTokCampaignsUseCase: SyncTikTokCampaignsUseCase,
+    private readonly downloadTikTokLeadsUseCase: DownloadTikTokLeadsUseCase,
+    @Inject(LEAD_REPOSITORY)
+    private readonly leadRepository: ILeadRepository,
+    private readonly webhookConfigService: WebhookConfigService,
+    private readonly webhookDispatcherService: WebhookDispatcherService,
+    @Inject(PLATFORM_CREDENTIAL_REPOSITORY)
+    private readonly credentialRepository: IPlatformCredentialRepository,
   ) {}
 
   /**
@@ -100,6 +117,7 @@ export class SyncScheduleService implements OnApplicationBootstrap {
     metaCampaigns: number;
     metaLeads: number;
     tiktokCampaigns: number;
+    tiktokLeads: number;
   }> {
     if (this.isExecuting) {
       throw new ConflictException('Ya hay una sincronización en ejecución en este momento.');
@@ -114,6 +132,7 @@ export class SyncScheduleService implements OnApplicationBootstrap {
       metaCampaigns: result.metaCampaigns,
       metaLeads: result.metaLeads,
       tiktokCampaigns: result.tiktokCampaigns,
+      tiktokLeads: result.tiktokLeads,
     };
   }
 
@@ -147,7 +166,8 @@ export class SyncScheduleService implements OnApplicationBootstrap {
 
   /**
    * Flujo central de ejecución de sincronización (Meta + TikTok + Leads)
-   * con logging persistente en BD y manejo robusto de excepciones.
+   * con logging persistente en BD, descarga de leads de ambas plataformas
+   * y disparo asíncrono del webhook saliente configurado por el cliente.
    */
   private async executeSyncWorkflow(
     schedule: SyncScheduleOrmEntity,
@@ -157,10 +177,11 @@ export class SyncScheduleService implements OnApplicationBootstrap {
     metaCampaigns: number;
     metaLeads: number;
     tiktokCampaigns: number;
+    tiktokLeads: number;
   }> {
     if (this.isExecuting) {
       this.logger.warn(`Sincronización solicitada por ${triggerType} ignorada: ya hay una en curso.`);
-      return { logId: '', metaCampaigns: 0, metaLeads: 0, tiktokCampaigns: 0 };
+      return { logId: '', metaCampaigns: 0, metaLeads: 0, tiktokCampaigns: 0, tiktokLeads: 0 };
     }
 
     this.isExecuting = true;
@@ -174,6 +195,7 @@ export class SyncScheduleService implements OnApplicationBootstrap {
       metaCampaignsSynced: 0,
       metaLeadsSynced: 0,
       tiktokCampaignsSynced: 0,
+      tiktokLeadsSynced: 0,
       details: {},
     });
     const savedLog = await this.logRepository.save(log);
@@ -181,6 +203,8 @@ export class SyncScheduleService implements OnApplicationBootstrap {
     let metaCampaignsCount = 0;
     let metaLeadsCount = 0;
     let tiktokCampaignsCount = 0;
+    let tiktokLeadsCount = 0;
+    const allProcessedLeadIds: string[] = [];
     const errors: string[] = [];
 
     try {
@@ -196,7 +220,10 @@ export class SyncScheduleService implements OnApplicationBootstrap {
             this.logger.log('Sincronizando leads de Meta Ads de todas las campañas...');
             const metaLeadsResult = await this.syncMetaLeadsUseCase.execute({});
             metaLeadsCount = metaLeadsResult.leadsSaved;
-            this.logger.log(`Leads de Meta Ads guardados: ${metaLeadsCount} nuevos`);
+            if (metaLeadsResult.processedLeadIds && metaLeadsResult.processedLeadIds.length > 0) {
+              allProcessedLeadIds.push(...metaLeadsResult.processedLeadIds);
+            }
+            this.logger.log(`Leads de Meta Ads guardados: ${metaLeadsCount} (${metaLeadsResult.processedLeadIds.length} procesados en lote)`);
           }
         } catch (err: any) {
           const errMsg = `Error en Meta Ads: ${err?.message || err}`;
@@ -205,13 +232,46 @@ export class SyncScheduleService implements OnApplicationBootstrap {
         }
       }
 
-      // 2. Sincronizar TikTok Ads (Campañas)
+      // 2. Sincronizar TikTok Ads (Campañas y Leads)
       if (schedule.syncTikTok) {
         try {
           this.logger.log('Sincronizando campañas de TikTok Ads...');
           const tiktokResult = await this.syncTikTokCampaignsUseCase.execute();
           tiktokCampaignsCount = tiktokResult.synced;
           this.logger.log(`Campañas TikTok Ads sincronizadas: ${tiktokCampaignsCount}`);
+
+          if (schedule.syncLeads) {
+            try {
+              const cred = await this.credentialRepository.findByPlatform(Platform.TIKTOK);
+              const advertiserId = cred?.accountId;
+              const pageId = cred?.appId || cred?.accountId;
+              if (advertiserId && pageId && !advertiserId.includes('tu_')) {
+                this.logger.log(`Sincronizando leads de TikTok Ads (advertiser: ${advertiserId}, page: ${pageId})...`);
+                const today = new Date();
+                const past = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000); // Rango de 3 días para crontab
+                const startDate = past.toISOString().split('T')[0];
+                const endDate = today.toISOString().split('T')[0];
+
+                const ttLeadsResult = await this.downloadTikTokLeadsUseCase.execute({
+                  advertiserId,
+                  pageId,
+                  startDate,
+                  endDate,
+                });
+                tiktokLeadsCount = ttLeadsResult.inserted + ttLeadsResult.updated;
+                if (ttLeadsResult.processedLeadIds && ttLeadsResult.processedLeadIds.length > 0) {
+                  allProcessedLeadIds.push(...ttLeadsResult.processedLeadIds);
+                }
+                this.logger.log(`Leads de TikTok Ads procesados: ${tiktokLeadsCount} (${ttLeadsResult.inserted} nuevos)`);
+              } else {
+                this.logger.log('TikTok advertiserId o pageId no configurados completamente para descarga automática de leads en crontab.');
+              }
+            } catch (ttLeadsErr: any) {
+              const errMsg = `Error en descarga de leads TikTok: ${ttLeadsErr?.message || ttLeadsErr}`;
+              this.logger.warn(errMsg);
+              errors.push(errMsg);
+            }
+          }
         } catch (err: any) {
           const errMsg = `Error en TikTok Ads: ${err?.message || err}`;
           this.logger.error(errMsg);
@@ -220,16 +280,18 @@ export class SyncScheduleService implements OnApplicationBootstrap {
       }
 
       // Determinar estado final del log
-      const isFailed = errors.length > 0 && (metaCampaignsCount === 0 && tiktokCampaignsCount === 0);
+      const isFailed = errors.length > 0 && (metaCampaignsCount === 0 && tiktokCampaignsCount === 0 && metaLeadsCount === 0 && tiktokLeadsCount === 0);
       savedLog.status = isFailed ? 'FAILED' : 'SUCCESS';
       savedLog.finishedAt = new Date();
       savedLog.metaCampaignsSynced = metaCampaignsCount;
       savedLog.metaLeadsSynced = metaLeadsCount;
       savedLog.tiktokCampaignsSynced = tiktokCampaignsCount;
+      savedLog.tiktokLeadsSynced = tiktokLeadsCount;
       savedLog.details = {
         syncMeta: schedule.syncMeta,
         syncTikTok: schedule.syncTikTok,
         syncLeads: schedule.syncLeads,
+        totalLeadsProcessed: allProcessedLeadIds.length,
         errors: errors.length > 0 ? errors : undefined,
       };
       savedLog.errorMessage = errors.length > 0 ? errors.join('; ') : null;
@@ -241,14 +303,32 @@ export class SyncScheduleService implements OnApplicationBootstrap {
       schedule.lastRunMessage =
         errors.length > 0
           ? `Parcialmente completado con advertencias: ${errors.join('; ')}`
-          : `Éxito: ${metaCampaignsCount} camp. Meta, ${metaLeadsCount} leads Meta, ${tiktokCampaignsCount} camp. TikTok`;
+          : `Éxito: ${metaCampaignsCount} camp. Meta, ${metaLeadsCount} leads Meta, ${tiktokCampaignsCount} camp. TikTok, ${tiktokLeadsCount} leads TikTok`;
       await this.scheduleRepository.save(schedule);
+
+      // 3. Disparo Asíncrono del Webhook Saliente configurado por el cliente
+      try {
+        const webhookConfig = await this.webhookConfigService.getConfig();
+        if (webhookConfig && webhookConfig.isEnabled && webhookConfig.url) {
+          const uniqueLeadIds = Array.from(new Set(allProcessedLeadIds));
+          if (uniqueLeadIds.length > 0 || !webhookConfig.triggerOnlyWhenLeadsFound) {
+            this.logger.log(`Invocando webhook saliente (${webhookConfig.deliveryFormat}) para ${uniqueLeadIds.length} leads procesados...`);
+            const leadsToSend = uniqueLeadIds.length > 0
+              ? await this.leadRepository.findByIds(uniqueLeadIds)
+              : [];
+            await this.webhookDispatcherService.dispatchLeads(webhookConfig, leadsToSend, savedLog.id);
+          }
+        }
+      } catch (webhookErr: any) {
+        this.logger.warn(`Error no bloqueante al disparar webhook: ${webhookErr?.message || webhookErr}`);
+      }
 
       return {
         logId: savedLog.id,
         metaCampaigns: metaCampaignsCount,
         metaLeads: metaLeadsCount,
         tiktokCampaigns: tiktokCampaignsCount,
+        tiktokLeads: tiktokLeadsCount,
       };
     } catch (criticalErr: any) {
       this.logger.error(`Fallo crítico en sincronización: ${criticalErr?.message || criticalErr}`);
@@ -267,6 +347,7 @@ export class SyncScheduleService implements OnApplicationBootstrap {
         metaCampaigns: metaCampaignsCount,
         metaLeads: metaLeadsCount,
         tiktokCampaigns: tiktokCampaignsCount,
+        tiktokLeads: tiktokLeadsCount,
       };
     } finally {
       this.isExecuting = false;
