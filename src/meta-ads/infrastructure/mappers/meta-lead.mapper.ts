@@ -93,7 +93,14 @@ export class MetaLeadMapper {
       formName: fallbackFormName ?? (rawItem.form_id ? `Form ${rawItem.form_id}` : null),
       fullName: fullName || null,
       cedula: cleanCedula || null,
-      ciudadDeclarada: rawCiudad ? String(rawCiudad).trim() : null,
+      ciudadDeclarada: rawCiudad
+        ? String(rawCiudad)
+            .replace(/_/g, ' ')
+            .normalize('NFD')
+            .replace(/[\u0300-\u036f]/g, '')
+            .trim()
+            .replace(/\s+/g, ' ')
+        : null,
       contactPreference: rawContactPref ? String(rawContactPref).toLowerCase().trim() : null,
       email: email || null,
       phone: phone || null,
