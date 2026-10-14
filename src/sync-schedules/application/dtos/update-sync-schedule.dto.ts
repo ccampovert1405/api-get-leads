@@ -8,9 +8,63 @@ import {
   IsBoolean,
   IsOptional,
   IsString,
+  IsEnum,
 } from 'class-validator';
 
+export enum ScheduleMode {
+  EXACT_TIME = 'EXACT_TIME',
+  INTERVAL = 'INTERVAL',
+  CUSTOM_HOURS = 'CUSTOM_HOURS',
+}
+
 export class UpdateSyncScheduleDto {
+  @ApiPropertyOptional({
+    description:
+      'Modalidad de programación del cron: EXACT_TIME (hora fija), INTERVAL (cada X horas), CUSTOM_HOURS (horas específicas)',
+    enum: ScheduleMode,
+    default: ScheduleMode.EXACT_TIME,
+  })
+  @IsOptional()
+  @IsEnum(ScheduleMode)
+  scheduleMode?: ScheduleMode;
+
+  @ApiPropertyOptional({
+    description: 'Intervalo en horas si scheduleMode es INTERVAL (ej: 2, 3, 4, 6, 8, 12)',
+    example: 4,
+    minimum: 1,
+    maximum: 24,
+  })
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  @Max(24)
+  intervalHours?: number;
+
+  @ApiPropertyOptional({
+    description:
+      'Lista de horas específicas del día (0 a 23) si scheduleMode es CUSTOM_HOURS (ej: [11, 14] para 11am y 2pm)',
+    example: [11, 14],
+    type: [Number],
+  })
+  @IsOptional()
+  @IsArray()
+  @IsInt({ each: true })
+  @Min(0, { each: true })
+  @Max(23, { each: true })
+  customHours?: number[];
+
+  @ApiPropertyOptional({
+    description: 'Cantidad de veces que se ejecutará en el día',
+    example: 2,
+    minimum: 1,
+    maximum: 24,
+  })
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  @Max(24)
+  timesPerDay?: number;
+
   @ApiProperty({
     description:
       'Días de la semana en que se ejecutará el cron. 1=Lunes, 2=Martes, 3=Miércoles, 4=Jueves, 5=Viernes, 6=Sábado, 0 ó 7=Domingo',
@@ -24,16 +78,18 @@ export class UpdateSyncScheduleDto {
   @Max(7, { each: true })
   daysOfWeek: number[];
 
-  @ApiProperty({
-    description: 'Hora de ejecución (formato 24 horas: 0 a 23)',
+  @ApiPropertyOptional({
+    description: 'Hora de ejecución (formato 24 horas: 0 a 23) para modalidad EXACT_TIME',
     example: 8,
     minimum: 0,
     maximum: 23,
+    default: 8,
   })
+  @IsOptional()
   @IsInt()
   @Min(0)
   @Max(23)
-  hour: number;
+  hour?: number;
 
   @ApiProperty({
     description: 'Minuto de ejecución (0 a 59)',

@@ -55,7 +55,15 @@ export class WebhookLeadMapper {
 
     const cedula = lead.cedula ?? null;
     const submissionCount = lead.submissionCount ?? 1;
-    const ciudadDeclarada = lead.ciudadDeclarada ?? null;
+    const rawCiudad = lead.ciudadDeclarada ?? null;
+    const ciudadDeclarada = rawCiudad
+      ? rawCiudad
+          .replace(/_/g, ' ')
+          .normalize('NFD')
+          .replace(/[\u0300-\u036f]/g, '')
+          .trim()
+          .replace(/\s+/g, ' ')
+      : null;
     const contactPreference = lead.contactPreference ?? null;
 
     const idCanton = lead.idCanton != null ? Number(lead.idCanton) : null;

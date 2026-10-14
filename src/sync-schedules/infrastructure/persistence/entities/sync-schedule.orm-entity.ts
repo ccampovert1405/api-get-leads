@@ -8,6 +8,8 @@ import {
 } from 'typeorm';
 import { SyncExecutionLogOrmEntity } from './sync-execution-log.orm-entity';
 
+export type ScheduleMode = 'EXACT_TIME' | 'INTERVAL' | 'CUSTOM_HOURS';
+
 @Entity('sync_schedules')
 export class SyncScheduleOrmEntity {
   @PrimaryGeneratedColumn('uuid')
@@ -21,6 +23,18 @@ export class SyncScheduleOrmEntity {
 
   @Column({ name: 'is_enabled', type: 'boolean', default: true })
   isEnabled: boolean;
+
+  @Column({ name: 'schedule_mode', type: 'varchar', length: 30, default: 'EXACT_TIME' })
+  scheduleMode: ScheduleMode;
+
+  @Column({ name: 'interval_hours', type: 'smallint', nullable: true })
+  intervalHours: number | null;
+
+  @Column({ name: 'custom_hours', type: 'jsonb', nullable: true })
+  customHours: number[] | null;
+
+  @Column({ name: 'times_per_day', type: 'smallint', nullable: true, default: 1 })
+  timesPerDay: number | null;
 
   @Column({ name: 'days_of_week', type: 'jsonb', default: [1, 2, 3, 4, 5] })
   daysOfWeek: number[]; // 0=Domingo, 1=Lunes, ..., 6=Sábado (o 7=Domingo)

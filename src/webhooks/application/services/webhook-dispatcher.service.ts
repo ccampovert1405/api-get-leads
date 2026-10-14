@@ -28,6 +28,7 @@ export interface WebhookSendResult {
   responseBody: string | null;
   errorMessage: string | null;
   attempts: number;
+  deliveryId?: string;
 }
 
 @Injectable()
@@ -107,7 +108,7 @@ export class WebhookDispatcherService {
         format === 'BATCH'
           ? leadPayloads
           : {
-              event: 'cron.leads.synced',
+              event: 'leads.downloaded',
               timestamp: new Date().toISOString(),
               total: leadPayloads.length,
               leads: leadPayloads,
@@ -185,7 +186,7 @@ export class WebhookDispatcherService {
       createdAt: new Date().toISOString(),
       cedula: '0909956526',
       submissionCount: 1,
-      ciudadDeclarada: 'los_ríos',
+      ciudadDeclarada: 'los rios',
       contactPreference: 'whatsapp',
       idCanton: null,
       idProvincia: null,
@@ -204,7 +205,7 @@ export class WebhookDispatcherService {
         : format === 'BATCH'
           ? [sampleLead]
           : {
-              event: 'cron.leads.synced.test',
+              event: 'leads.downloaded.test',
               timestamp: new Date().toISOString(),
               total: 1,
               leads: [sampleLead],
@@ -249,10 +250,16 @@ export class WebhookDispatcherService {
     const { url, payload, secret, authToken, timeoutMs = 10000, retryAttempts = 3 } = options;
     const bodyString = JSON.stringify(payload);
 
+    const deliveryId = crypto.randomUUID();
+    const timestampSec = Math.floor(Date.now() / 1000).toString();
+
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
-      'User-Agent': 'MetaAds-TikTok-WebhookEngine/1.0',
-      'X-Webhook-Event': 'cron.leads.synced',
+      'User-Agent': 'MetaAds-LeadSync-Webhook/1.0',
+      'X-Webhook-Event': 'leads.downloaded',
+      'X-Webhook-Delivery': deliveryId,
+      'X-Delivery-Id': deliveryId,
+      'X-Webhook-Timestamp': timestampSec,
     };
 
     if (authToken && authToken.trim().length > 0) {
@@ -264,6 +271,7 @@ export class WebhookDispatcherService {
       hmac.update(bodyString, 'utf8');
       const signature = hmac.digest('hex');
       headers['X-Webhook-Signature'] = `sha256=${signature}`;
+      headers['X-Hub-Signature-256'] = `sha256=${signature}`;
     }
 
     const maxAttempts = Math.max(1, retryAttempts);
@@ -276,6 +284,9 @@ export class WebhookDispatcherService {
     while (currentAttempt < maxAttempts) {
       currentAttempt++;
       const startTime = Date.now();
+      this.logger.log(
+        `[Webhook Dispatch] POST ${url} | Intento ${currentAttempt}/${maxAttempts} | DeliveryId: ${deliveryId}`,
+      );
 
       try {
         const response = await firstValueFrom(
@@ -291,6 +302,10 @@ export class WebhookDispatcherService {
         const responseData = typeof response.data === 'string' ? response.data : JSON.stringify(response.data);
         const truncatedResponse = responseData ? responseData.substring(0, 1000) : null;
 
+        this.logger.log(
+          `[Webhook Dispatch Éxito] POST ${url} -> HTTP ${status} en ${totalDurationMs}ms | Respuesta: ${truncatedResponse || '(vacía)'}`,
+        );
+
         const isSuccess = status >= 200 && status < 300;
         if (isSuccess) {
           return {
@@ -300,6 +315,7 @@ export class WebhookDispatcherService {
             responseBody: truncatedResponse,
             errorMessage: null,
             attempts: currentAttempt,
+            deliveryId,
           };
         }
 
@@ -318,6 +334,10 @@ export class WebhookDispatcherService {
           lastStatus = 0;
           lastResponseBody = null;
         }
+
+        this.logger.warn(
+          `[Webhook Dispatch Fallo] POST ${url} -> HTTP ${lastStatus || 'ERR'} (${err.message}) en ${totalDurationMs}ms | Respuesta: ${lastResponseBody || '(vacía)'}`,
+        );
 
         // Si es error 4xx de cliente (ej. 401 Unauthorized, 404), no reintentar
         if (lastStatus && lastStatus >= 400 && lastStatus < 500) {
@@ -343,6 +363,7 @@ export class WebhookDispatcherService {
       responseBody: lastResponseBody,
       errorMessage: errorMsg,
       attempts: currentAttempt,
+      deliveryId,
     };
   }
 
@@ -362,7 +383,10 @@ export class WebhookDispatcherService {
         attempts: data.attempts ?? 1,
       });
 
-      await this.deliveryLogRepo.save(log);
+      const saved = await this.deliveryLogRepo.save(log);
+      this.logger.log(
+        `[Webhook Log Persistido] ID: ${saved.id} | Formato: ${saved.deliveryFormat} | Status: ${saved.status} | HTTP: ${saved.httpStatus} | Duración: ${saved.durationMs}ms | Respuesta Servidor: ${saved.responseBody || '(vacía)'}`,
+      );
     } catch (saveErr: any) {
       this.logger.warn(`No se pudo persistir log de webhook: ${saveErr?.message || saveErr}`);
     }

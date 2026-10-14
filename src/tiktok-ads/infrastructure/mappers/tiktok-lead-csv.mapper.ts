@@ -123,7 +123,14 @@ export class TikTokLeadCsvMapper {
       phone: phone || null,
       receivedAt: this.parseDate(record['Created Time'] ?? record['created_time'] ?? normalizedMap['created_time']),
       cedula: cleanCedula || null,
-      ciudadDeclarada: rawCiudad ? String(rawCiudad).trim() : null,
+      ciudadDeclarada: rawCiudad
+        ? String(rawCiudad)
+            .replace(/_/g, ' ')
+            .normalize('NFD')
+            .replace(/[\u0300-\u036f]/g, '')
+            .trim()
+            .replace(/\s+/g, ' ')
+        : null,
       contactPreference: rawContactPref ? String(rawContactPref).toLowerCase().trim() : null,
       rawPayload: record,
     };

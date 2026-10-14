@@ -68,6 +68,23 @@ export class SyncScheduleController {
     return this.syncScheduleService.triggerManualSync();
   }
 
+  @Post('run')
+  @HttpCode(HttpStatus.OK)
+  @RequirePermissions({
+    identificador: 'sync.schedules.trigger',
+    nombre: 'Ejecutar sincronización programada bajo demanda',
+  })
+  @ApiOperation({
+    summary: 'Correr el crontab manualmente en este instante (Alias de /trigger)',
+    description:
+      'Fuerza la ejecución inmediata del crontab sin esperar a la próxima hora programada.',
+  })
+  @ApiResponse({ status: 200, description: 'Crontab ejecutado exitosamente' })
+  @ApiResponse({ status: 409, description: 'Conflicto: ya hay una sincronización en curso' })
+  async runCronNow() {
+    return this.syncScheduleService.triggerManualSync();
+  }
+
   @Get('logs')
   @RequirePermissions({
     identificador: 'sync.schedules.logs.read',

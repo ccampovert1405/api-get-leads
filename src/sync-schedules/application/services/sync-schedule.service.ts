@@ -63,30 +63,83 @@ export class SyncScheduleService implements OnApplicationBootstrap {
   /**
    * Obtiene la configuración actual de sincronización programada.
    */
-  async getSchedule(): Promise<SyncScheduleOrmEntity & { cronExpression: string; nextRun: string | null }> {
+  async getSchedule(): Promise<
+    SyncScheduleOrmEntity & {
+      cronExpression: string;
+      nextRun: string | null;
+      summaryText: string;
+    }
+  > {
     const schedule = await this.getOrCreateDefaultSchedule();
-    const cronExpression = this.buildCronExpression(schedule.minute, schedule.hour, schedule.daysOfWeek);
+    const cronExpression = this.buildCronExpression(
+      schedule.minute,
+      schedule.scheduleMode,
+      schedule.hour,
+      schedule.intervalHours,
+      schedule.customHours,
+      schedule.daysOfWeek,
+    );
     const nextRun = this.getNextExecutionDate();
+    const summaryText = this.buildScheduleSummary(schedule);
 
     return {
       ...schedule,
       cronExpression,
       nextRun,
+      summaryText,
     };
   }
 
   /**
-   * Actualiza los parámetros de la sincronización (días, hora, minuto, flags)
+   * Actualiza los parámetros de la sincronización (modalidad, días, horas, intervalos, flags)
    * y reprograma el CronJob en memoria inmediatamente.
    */
   async updateSchedule(
     dto: UpdateSyncScheduleDto,
-  ): Promise<SyncScheduleOrmEntity & { cronExpression: string; nextRun: string | null }> {
+  ): Promise<
+    SyncScheduleOrmEntity & {
+      cronExpression: string;
+      nextRun: string | null;
+      summaryText: string;
+    }
+  > {
     const schedule = await this.getOrCreateDefaultSchedule();
 
     schedule.daysOfWeek = dto.daysOfWeek;
-    schedule.hour = dto.hour;
     schedule.minute = dto.minute;
+
+    if (dto.scheduleMode !== undefined) {
+      schedule.scheduleMode = dto.scheduleMode;
+    }
+    if (dto.intervalHours !== undefined) {
+      schedule.intervalHours = dto.intervalHours;
+    }
+    if (dto.customHours !== undefined) {
+      schedule.customHours = dto.customHours;
+    }
+
+    if (dto.timesPerDay !== undefined) {
+      schedule.timesPerDay = dto.timesPerDay;
+    } else if (schedule.scheduleMode === 'INTERVAL' && schedule.intervalHours) {
+      schedule.timesPerDay = Math.floor(24 / schedule.intervalHours);
+    } else if (schedule.scheduleMode === 'CUSTOM_HOURS' && schedule.customHours) {
+      schedule.timesPerDay = schedule.customHours.length;
+    } else if (schedule.scheduleMode === 'EXACT_TIME') {
+      schedule.timesPerDay = 1;
+    }
+
+    if (dto.hour !== undefined) {
+      schedule.hour = dto.hour;
+    } else if (
+      schedule.scheduleMode === 'CUSTOM_HOURS' &&
+      schedule.customHours &&
+      schedule.customHours.length > 0
+    ) {
+      schedule.hour = schedule.customHours[0];
+    } else if (schedule.hour === undefined || schedule.hour === null) {
+      schedule.hour = 8;
+    }
+
     if (dto.isEnabled !== undefined) schedule.isEnabled = dto.isEnabled;
     if (dto.syncMeta !== undefined) schedule.syncMeta = dto.syncMeta;
     if (dto.syncTikTok !== undefined) schedule.syncTikTok = dto.syncTikTok;
@@ -94,17 +147,28 @@ export class SyncScheduleService implements OnApplicationBootstrap {
     if (dto.timezone !== undefined) schedule.timezone = dto.timezone;
 
     const saved = await this.scheduleRepository.save(schedule);
-    this.logger.log(`Configuración de sincronización actualizada: hora=${saved.hour}:${saved.minute}, días=${saved.daysOfWeek}`);
+    this.logger.log(
+      `Configuración de sincronización actualizada: modo=${saved.scheduleMode}, intervalo=${saved.intervalHours}h, horasCustom=${JSON.stringify(saved.customHours)}, horaBase=${saved.hour}:${saved.minute}, días=${saved.daysOfWeek}`,
+    );
 
     this.rescheduleCronJob(saved);
 
-    const cronExpression = this.buildCronExpression(saved.minute, saved.hour, saved.daysOfWeek);
+    const cronExpression = this.buildCronExpression(
+      saved.minute,
+      saved.scheduleMode,
+      saved.hour,
+      saved.intervalHours,
+      saved.customHours,
+      saved.daysOfWeek,
+    );
     const nextRun = this.getNextExecutionDate();
+    const summaryText = this.buildScheduleSummary(saved);
 
     return {
       ...saved,
       cronExpression,
       nextRun,
+      summaryText,
     };
   }
 
@@ -371,7 +435,14 @@ export class SyncScheduleService implements OnApplicationBootstrap {
     }
 
     // 3. Crear expresión cron
-    const cronExp = this.buildCronExpression(schedule.minute, schedule.hour, schedule.daysOfWeek);
+    const cronExp = this.buildCronExpression(
+      schedule.minute,
+      schedule.scheduleMode,
+      schedule.hour,
+      schedule.intervalHours,
+      schedule.customHours,
+      schedule.daysOfWeek,
+    );
     this.logger.log(`Registrando CronJob '${SYNC_CRON_JOB_NAME}' con expresión: "${cronExp}" (TZ: ${schedule.timezone})`);
 
     const job = new CronJob(
@@ -391,14 +462,80 @@ export class SyncScheduleService implements OnApplicationBootstrap {
     this.logger.log(`CronJob '${SYNC_CRON_JOB_NAME}' activo. Próxima ejecución: ${nextDate}`);
   }
 
-  /**
-   * Convierte minuto, hora y lista de días a expresión cron estándar.
-   * Formato: "minuto hora * * dias" (ej: "30 8 * * 1,2,3,4,5")
-   */
-  private buildCronExpression(minute: number, hour: number, daysOfWeek: number[]): string {
+  // Convierte minuto, hora, intervalo o lista de horas y días a expresión cron estándar.
+  // Formato: "minuto horas * * dias" (ej: "30 8 * * 1,2,3,4,5" o "0 */4 * * 1,2,3,4,5" o "0 11,14 * * 1,2,3,4,5")
+  public buildCronExpression(
+    minute: number,
+    scheduleMode: 'EXACT_TIME' | 'INTERVAL' | 'CUSTOM_HOURS' = 'EXACT_TIME',
+    hour: number = 8,
+    intervalHours?: number | null,
+    customHours?: number[] | null,
+    daysOfWeek: number[] = [1, 2, 3, 4, 5],
+  ): string {
     const sortedDays = Array.from(new Set(daysOfWeek)).sort((a, b) => a - b);
     const daysPart = sortedDays.length > 0 ? sortedDays.join(',') : '*';
-    return `${minute} ${hour} * * ${daysPart}`;
+
+    let hoursPart: string;
+
+    if (scheduleMode === 'INTERVAL' && intervalHours && intervalHours > 0) {
+      hoursPart = `*/${intervalHours}`;
+    } else if (scheduleMode === 'CUSTOM_HOURS' && Array.isArray(customHours) && customHours.length > 0) {
+      const uniqueHours = Array.from(new Set(customHours))
+        .filter((h) => typeof h === 'number' && h >= 0 && h <= 23)
+        .sort((a, b) => a - b);
+      hoursPart = uniqueHours.length > 0 ? uniqueHours.join(',') : `${hour ?? 8}`;
+    } else {
+      hoursPart = `${hour ?? 8}`;
+    }
+
+    return `${minute} ${hoursPart} * * ${daysPart}`;
+  }
+
+  /**
+   * Genera un resumen explicativo en español legible de la programación activa.
+   */
+  public buildScheduleSummary(schedule: SyncScheduleOrmEntity): string {
+    const dayNames: Record<number, string> = {
+      1: 'Lun',
+      2: 'Mar',
+      3: 'Mié',
+      4: 'Jue',
+      5: 'Vie',
+      6: 'Sáb',
+      0: 'Dom',
+      7: 'Dom',
+    };
+    const daysText = (schedule.daysOfWeek || [])
+      .map((d) => dayNames[d] || String(d))
+      .join(', ');
+
+    const formatHour = (h: number, m: number): string => {
+      const ampm = h >= 12 ? 'PM' : 'AM';
+      const h12 = h % 12 === 0 ? 12 : h % 12;
+      const minStr = m.toString().padStart(2, '0');
+      return `${h12.toString().padStart(2, '0')}:${minStr} ${ampm} (${h.toString().padStart(2, '0')}:${minStr})`;
+    };
+
+    const minStr = (schedule.minute || 0).toString().padStart(2, '0');
+
+    if (schedule.scheduleMode === 'INTERVAL' && schedule.intervalHours) {
+      const times = Math.floor(24 / schedule.intervalHours);
+      return `Cada ${schedule.intervalHours} hora(s) (${times} veces al día) al minuto :${minStr} [${daysText}]`;
+    }
+
+    if (
+      schedule.scheduleMode === 'CUSTOM_HOURS' &&
+      Array.isArray(schedule.customHours) &&
+      schedule.customHours.length > 0
+    ) {
+      const formattedHours = schedule.customHours
+        .sort((a, b) => a - b)
+        .map((h) => formatHour(h, schedule.minute || 0))
+        .join(', ');
+      return `${schedule.customHours.length} veces al día a las [${formattedHours}] [${daysText}]`;
+    }
+
+    return `Una vez al día a las ${formatHour(schedule.hour ?? 8, schedule.minute || 0)} [${daysText}]`;
   }
 
   /**
@@ -430,6 +567,10 @@ export class SyncScheduleService implements OnApplicationBootstrap {
         name: 'sincronizacion-campanas-predeterminada',
         description: 'Sincronización automática de campañas y leads de Meta Ads y TikTok Ads',
         isEnabled: true,
+        scheduleMode: 'EXACT_TIME',
+        intervalHours: null,
+        customHours: null,
+        timesPerDay: 1,
         daysOfWeek: [1, 2, 3, 4, 5], // Lunes a Viernes
         hour: 8,
         minute: 0,
@@ -440,6 +581,19 @@ export class SyncScheduleService implements OnApplicationBootstrap {
       });
       schedule = await this.scheduleRepository.save(schedule);
       this.logger.log('Creada configuración inicial predeterminada de sincronización en PostgreSQL');
+    } else {
+      let needsSave = false;
+      if (!schedule.scheduleMode) {
+        schedule.scheduleMode = 'EXACT_TIME';
+        needsSave = true;
+      }
+      if (schedule.timesPerDay == null) {
+        schedule.timesPerDay = 1;
+        needsSave = true;
+      }
+      if (needsSave) {
+        schedule = await this.scheduleRepository.save(schedule);
+      }
     }
 
     return schedule;
