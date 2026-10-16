@@ -1,4 +1,4 @@
-import { Module } from '@nestjs/common';
+import { forwardRef, Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { HttpModule } from '@nestjs/axios';
 
@@ -7,6 +7,7 @@ import { WebhookDeliveryLogOrmEntity } from './infrastructure/persistence/entiti
 import { WebhookConfigService } from './application/services/webhook-config.service';
 import { WebhookDispatcherService } from './application/services/webhook-dispatcher.service';
 import { WebhooksController } from './infrastructure/controllers/webhooks.controller';
+import { LeadsModule } from '../leads/leads.module';
 
 @Module({
   imports: [
@@ -15,6 +16,7 @@ import { WebhooksController } from './infrastructure/controllers/webhooks.contro
       timeout: 15000,
       maxRedirects: 3,
     }),
+    forwardRef(() => LeadsModule),
   ],
   providers: [WebhookConfigService, WebhookDispatcherService],
   controllers: [WebhooksController],

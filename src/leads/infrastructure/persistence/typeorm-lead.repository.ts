@@ -1,7 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { In, Repository } from 'typeorm';
-import { ILeadRepository, LeadListFilters } from '../../domain/repositories/lead.repository.interface';
+import { ILeadRepository, LeadListFilters, SaveManyResult } from '../../domain/repositories/lead.repository.interface';
 import { Lead, LeadSource } from '../../domain/entities/lead.entity';
 import { LeadOrmEntity } from './entities/lead.orm-entity';
 import { LeadMapper } from '../mappers/lead.mapper';
@@ -32,74 +32,148 @@ export class TypeOrmLeadRepository implements ILeadRepository {
             fullName: lead.fullName || existing.fullName,
             phone: lead.phone || existing.phone,
             email: lead.email || existing.email,
+            webhookStatus: 'PENDING',
+            webhookSentAt: null,
+            webhookError: null,
           });
           return;
         }
       }
 
-      await this.repo.upsert(LeadMapper.toOrm(lead), ['source', 'sourceLeadId']);
+      const orm = LeadMapper.toOrm(lead);
+      orm.webhookStatus = 'PENDING';
+      orm.webhookSentAt = null;
+      orm.webhookError = null;
+      await this.repo.upsert(orm, ['source', 'sourceLeadId']);
     });
   }
 
   /**
-   * Idempotente y deduplicador por cédula:
-   * Si la cédula ya existe, actualiza el registro e incrementa el submission_count.
-   * Si no existe cédula o es nueva, inserta el lead.
+   * Idempotente, clasificador de nuevos/actualizados/omitidos:
+   * 1. NUEVO: Si no existe en BD, lo inserta con webhookStatus = 'PENDING'.
+   * 2. ACTUALIZADO: Si ya existe pero trae nuevos datos o nueva fecha de sumisión,
+   *    actualiza los datos y restablece webhookStatus = 'PENDING' para reenviar.
+   * 3. OMITIDO: Si ya existe y es exactamente idéntico, se omite (no se reenvía al webhook).
    */
-  async saveMany(leads: Lead[]): Promise<{ inserted: number; skipped: number; updated: number; savedIds: string[] }> {
+  async saveMany(leads: Lead[]): Promise<SaveManyResult> {
     if (leads.length === 0) {
-      return { inserted: 0, skipped: 0, updated: 0, savedIds: [] };
+      return {
+        inserted: 0,
+        skipped: 0,
+        updated: 0,
+        savedIds: [],
+        insertedIds: [],
+        updatedIds: [],
+        skippedIds: [],
+      };
     }
 
     let inserted = 0;
     let updated = 0;
+    let skipped = 0;
+    const insertedIds: string[] = [];
+    const updatedIds: string[] = [];
+    const skippedIds: string[] = [];
     const savedIds: string[] = [];
 
     for (const lead of leads) {
       try {
-        if (lead.cedula && lead.cedula.trim().length >= 5) {
-          const cleanCedula = lead.cedula.trim();
-          const existing = await this.repo.findOne({ where: { cedula: cleanCedula } });
-          if (existing) {
-            // Ya existe un lead con esta cédula: no insertamos uno nuevo, incrementamos contador
-            await this.repo.update(existing.id, {
-              submissionCount: (existing.submissionCount || 1) + 1,
-              lastSubmissionAt: lead.receivedAt,
-              formName: lead.formName || existing.formName,
-              rawPayload: lead.rawPayload as Record<string, any>,
-              contactPreference: lead.contactPreference || existing.contactPreference,
-              idProvincia: lead.idProvincia || existing.idProvincia,
-              idCanton: lead.idCanton || existing.idCanton,
-              idDependencia: lead.idDependencia || existing.idDependencia,
-              fullName: lead.fullName || existing.fullName,
-              phone: lead.phone || existing.phone,
-              email: lead.email || existing.email,
-            });
-            updated++;
-            savedIds.push(existing.id);
-            continue;
-          }
+        // 1. Buscar si ya existe por (source + sourceLeadId) o por cédula válida
+        let existing: LeadOrmEntity | null = null;
+
+        if (lead.source && lead.sourceLeadId) {
+          existing = await this.repo.findOne({
+            where: { source: lead.source, sourceLeadId: lead.sourceLeadId },
+          });
         }
 
-        // Si no existe cédula o es nueva, hacemos upsert por source + sourceLeadId
-        await this.withRetry(() =>
-          this.repo.upsert(LeadMapper.toOrm(lead), ['source', 'sourceLeadId']),
-        );
-        inserted++;
+        if (!existing && lead.cedula && lead.cedula.trim().length >= 5) {
+          const cleanCedula = lead.cedula.trim();
+          existing = await this.repo.findOne({ where: { cedula: cleanCedula } });
+        }
 
-        const savedRecord = await this.repo.findOne({
-          where: { source: lead.source, sourceLeadId: lead.sourceLeadId },
-          select: ['id'],
-        });
-        if (savedRecord) {
+        // Caso 1: No existe en base de datos -> NUEVO
+        if (!existing) {
+          const orm = LeadMapper.toOrm(lead);
+          orm.webhookStatus = 'PENDING';
+          orm.webhookSentAt = null;
+          orm.webhookError = null;
+          orm.lastWebhookLogId = null;
+          orm.lastWebhookPayload = null;
+
+          const savedRecord = await this.withRetry(() => this.repo.save(orm));
+          inserted++;
+          insertedIds.push(savedRecord.id);
           savedIds.push(savedRecord.id);
+          continue;
+        }
+
+        // Caso 2: Ya existe en base de datos -> Evaluar si hubo actualización real o si es idéntico
+        const isNewSubmission =
+          Boolean(lead.sourceLeadId && lead.sourceLeadId !== existing.sourceLeadId) ||
+          Boolean(
+            lead.receivedAt &&
+              existing.receivedAt &&
+              new Date(lead.receivedAt).getTime() >
+                new Date(existing.lastSubmissionAt || existing.receivedAt).getTime(),
+          );
+
+        const hasDataChanges =
+          Boolean(lead.fullName && lead.fullName !== existing.fullName) ||
+          Boolean(lead.phone && lead.phone !== existing.phone) ||
+          Boolean(lead.email && lead.email !== existing.email) ||
+          Boolean(lead.formName && lead.formName !== existing.formName) ||
+          Boolean(lead.ciudadDeclarada && lead.ciudadDeclarada !== existing.ciudadDeclarada) ||
+          Boolean(lead.idCanton && Number(lead.idCanton) !== Number(existing.idCanton)) ||
+          Boolean(lead.idProvincia && Number(lead.idProvincia) !== Number(existing.idProvincia)) ||
+          Boolean(lead.idDependencia && lead.idDependencia !== existing.idDependencia);
+
+        const shouldUpdate = isNewSubmission || hasDataChanges;
+
+        if (shouldUpdate) {
+          await this.repo.update(existing.id, {
+            submissionCount: isNewSubmission
+              ? (existing.submissionCount || 1) + 1
+              : existing.submissionCount || 1,
+            lastSubmissionAt: isNewSubmission
+              ? lead.receivedAt
+              : existing.lastSubmissionAt || existing.receivedAt,
+            formName: lead.formName || existing.formName,
+            rawPayload: (lead.rawPayload as Record<string, any>) || existing.rawPayload,
+            contactPreference: lead.contactPreference || existing.contactPreference,
+            idProvincia: lead.idProvincia || existing.idProvincia,
+            idCanton: lead.idCanton || existing.idCanton,
+            idDependencia: lead.idDependencia || existing.idDependencia,
+            fullName: lead.fullName || existing.fullName,
+            phone: lead.phone || existing.phone,
+            email: lead.email || existing.email,
+            webhookStatus: 'PENDING', // Se restablece para ser despachado nuevamente
+            webhookSentAt: null,
+            webhookError: null,
+          });
+
+          updated++;
+          updatedIds.push(existing.id);
+          savedIds.push(existing.id);
+        } else {
+          // Caso 3: Es exactamente el mismo lead sin cambios. Se omite para no duplicar ni reenviar
+          skipped++;
+          skippedIds.push(existing.id);
         }
       } catch (err: any) {
         this.logger.warn(`Error al procesar lead ${lead.sourceLeadId}: ${err?.message || err}`);
       }
     }
 
-    return { inserted, skipped: 0, updated, savedIds };
+    return {
+      inserted,
+      skipped,
+      updated,
+      savedIds,
+      insertedIds,
+      updatedIds,
+      skippedIds,
+    };
   }
 
   async findByIds(ids: string[]): Promise<Lead[]> {
@@ -174,6 +248,59 @@ export class TypeOrmLeadRepository implements ILeadRepository {
 
     const [rows, total] = await qb.getManyAndCount();
     return { items: rows.map((r) => LeadMapper.toDomain(r)), total };
+  }
+
+  async markWebhookDispatched(params: {
+    leadIds: string[];
+    status: 'SENT' | 'FAILED';
+    webhookLogId?: string;
+    error?: string | null;
+    payloadsByLeadId?: Record<string, Record<string, any>>;
+  }): Promise<void> {
+    if (!params.leadIds || params.leadIds.length === 0) return;
+
+    for (const leadId of params.leadIds) {
+      try {
+        const updateData: Partial<LeadOrmEntity> = {
+          webhookStatus: params.status,
+          webhookError: params.error ?? null,
+        };
+
+        if (params.status === 'SENT') {
+          updateData.webhookSentAt = new Date();
+          if (params.webhookLogId) {
+            updateData.lastWebhookLogId = params.webhookLogId;
+          }
+        }
+
+        if (params.payloadsByLeadId && params.payloadsByLeadId[leadId]) {
+          updateData.lastWebhookPayload = params.payloadsByLeadId[leadId];
+        }
+
+        await this.repo.update(leadId, updateData);
+      } catch (err: any) {
+        this.logger.warn(`Error al actualizar estado de webhook para lead ${leadId}: ${err?.message || err}`);
+      }
+    }
+  }
+
+  async getWebhookStatusSummary(): Promise<{
+    totalLeads: number;
+    webhookSent: number;
+    webhookPending: number;
+    webhookFailed: number;
+  }> {
+    const totalLeads = await this.repo.count();
+    const webhookSent = await this.repo.count({ where: { webhookStatus: 'SENT' } });
+    const webhookPending = await this.repo.count({ where: { webhookStatus: 'PENDING' } });
+    const webhookFailed = await this.repo.count({ where: { webhookStatus: 'FAILED' } });
+
+    return {
+      totalLeads,
+      webhookSent,
+      webhookPending,
+      webhookFailed,
+    };
   }
 
   private async withRetry<T>(fn: () => Promise<T>, retries = 3, delayMs = 500): Promise<T> {

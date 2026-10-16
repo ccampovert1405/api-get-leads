@@ -2,6 +2,8 @@ import { Lead } from '../../../leads/domain/entities/lead.entity';
 import { LeadOrmEntity } from '../../../leads/infrastructure/persistence/entities/lead.orm-entity';
 
 export interface WebhookLeadPayload {
+  action: 'CREATED' | 'UPDATED';
+  eventType: 'lead.created' | 'lead.updated';
   id: string;
   source: string;
   sourceLeadId: string;
@@ -28,7 +30,7 @@ export interface WebhookLeadPayload {
 }
 
 export class WebhookLeadMapper {
-  static toPayload(lead: Lead | LeadOrmEntity): WebhookLeadPayload {
+  static toPayload(lead: Lead | LeadOrmEntity, forcedAction?: 'CREATED' | 'UPDATED'): WebhookLeadPayload {
     const isDomain = lead instanceof Lead;
 
     const id = lead.id;
@@ -101,7 +103,16 @@ export class WebhookLeadMapper {
       };
     }
 
+    const action: 'CREATED' | 'UPDATED' =
+      forcedAction ??
+      (submissionCount > 1 || (lead.lastSubmissionAt && lead.receivedAt && new Date(lead.lastSubmissionAt).getTime() > new Date(lead.receivedAt).getTime())
+        ? 'UPDATED'
+        : 'CREATED');
+    const eventType: 'lead.created' | 'lead.updated' = action === 'UPDATED' ? 'lead.updated' : 'lead.created';
+
     return {
+      action,
+      eventType,
       id,
       source,
       sourceLeadId,

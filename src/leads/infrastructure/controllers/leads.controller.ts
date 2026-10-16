@@ -1,4 +1,4 @@
-import { Controller, Get, Inject, Query, Res } from '@nestjs/common';
+import { Controller, Get, Inject, NotFoundException, Param, Query, Res } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiProduces, ApiResponse, ApiTags } from '@nestjs/swagger';
 import { Response } from 'express';
 import { ILeadRepository, LEAD_REPOSITORY } from '../../domain/repositories/lead.repository.interface';
@@ -10,6 +10,17 @@ import { RequirePermissions } from '../../../auth/decorators/permissions.decorat
 @Controller('leads')
 export class LeadsController {
   constructor(@Inject(LEAD_REPOSITORY) private readonly leadRepository: ILeadRepository) {}
+
+  @Get('webhook-status')
+  @RequirePermissions({
+    identificador: 'leads.webhook-status.read',
+    nombre: 'Consultar estado y métricas de webhook de leads',
+  })
+  @ApiOperation({ summary: 'Obtiene métricas de leads (total, enviados por webhook, pendientes y fallidos)' })
+  @ApiResponse({ status: 200, description: 'Resumen de estado de webhook recuperado exitosamente' })
+  async getWebhookStatus() {
+    return this.leadRepository.getWebhookStatusSummary();
+  }
 
   @Get()
   @RequirePermissions({
@@ -109,5 +120,21 @@ export class LeadsController {
     res.setHeader('Content-Type', 'text/csv; charset=utf-8');
     res.setHeader('Content-Disposition', `attachment; filename="leads-export-${Date.now()}.csv"`);
     return csv;
+  }
+
+  @Get(':id')
+  @RequirePermissions({
+    identificador: 'leads.read',
+    nombre: 'Consultar detalle de Lead',
+  })
+  @ApiOperation({ summary: 'Obtiene el detalle de un lead por su ID, incluyendo la estructura JSON despachada por webhook' })
+  @ApiResponse({ status: 200, description: 'Detalle de lead recuperado' })
+  @ApiResponse({ status: 404, description: 'Lead no encontrado' })
+  async findOne(@Param('id') id: string) {
+    const leads = await this.leadRepository.findByIds([id]);
+    if (!leads || leads.length === 0) {
+      throw new NotFoundException(`Lead con ID ${id} no encontrado`);
+    }
+    return leads[0];
   }
 }

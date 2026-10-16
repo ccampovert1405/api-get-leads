@@ -51,6 +51,12 @@ export class WebhookDeliveryLogOrmEntity {
   @Column({ name: 'attempts', type: 'integer', default: 1 })
   attempts: number;
 
+  @Column({ name: 'dispatched_lead_ids', type: 'jsonb', nullable: true })
+  dispatchedLeadIds: string[] | null;
+
+  @Column({ name: 'dispatched_leads_summary', type: 'jsonb', nullable: true })
+  dispatchedLeadsSummary: Array<Record<string, any>> | null;
+
   @Index('IDX_webhook_delivery_logs_created_at')
   @CreateDateColumn({ name: 'created_at', type: 'timestamp with time zone' })
   createdAt: Date;

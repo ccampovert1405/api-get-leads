@@ -15,6 +15,11 @@ export interface SyncMetaLeadsResult {
   leadsFetched: number;
   leadsSaved: number;
   processedLeadIds: string[];
+  insertedCount: number;
+  updatedCount: number;
+  skippedCount: number;
+  insertedIds: string[];
+  updatedIds: string[];
 }
 
 @Injectable()
@@ -140,14 +145,19 @@ export class SyncMetaLeadsUseCase {
         leadsFetched: 0,
         leadsSaved: 0,
         processedLeadIds: [],
+        insertedCount: 0,
+        updatedCount: 0,
+        skippedCount: 0,
+        insertedIds: [],
+        updatedIds: [],
       };
     }
 
-    const { inserted, updated, savedIds } = await this.leadRepository.saveMany(allLeads);
+    const { inserted, updated, skipped, savedIds, insertedIds, updatedIds } = await this.leadRepository.saveMany(allLeads);
 
     this.logger.log(
       `Sincronización de leads Meta completada exitosamente: ${campaignIdsToQuery.length} campañas revisadas, ` +
-        `${allLeads.length} leads obtenidos, ${inserted} nuevos persistidos, ${updated} actualizados/recurrentes en base de datos.`,
+        `${allLeads.length} leads obtenidos, ${inserted} nuevos persistidos, ${updated} actualizados/recurrentes, ${skipped} omitidos (sin cambios).`,
     );
 
     return {
@@ -155,6 +165,11 @@ export class SyncMetaLeadsUseCase {
       leadsFetched: allLeads.length,
       leadsSaved: inserted + updated,
       processedLeadIds: savedIds || [],
+      insertedCount: inserted,
+      updatedCount: updated,
+      skippedCount: skipped,
+      insertedIds: insertedIds || [],
+      updatedIds: updatedIds || [],
     };
   }
 

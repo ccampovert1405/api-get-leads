@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, Inject, forwardRef } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { HttpService } from '@nestjs/axios';
@@ -14,6 +14,7 @@ import { WebhookDeliveryLogOrmEntity } from '../../infrastructure/persistence/en
 import { WebhookLeadMapper, WebhookLeadPayload } from '../mappers/webhook-lead.mapper';
 import { Lead } from '../../../leads/domain/entities/lead.entity';
 import { LeadOrmEntity } from '../../../leads/infrastructure/persistence/entities/lead.orm-entity';
+import { ILeadRepository, LEAD_REPOSITORY } from '../../../leads/domain/repositories/lead.repository.interface';
 
 export interface DispatchResult {
   sentCount: number;
@@ -39,6 +40,8 @@ export class WebhookDispatcherService {
     @InjectRepository(WebhookDeliveryLogOrmEntity)
     private readonly deliveryLogRepo: Repository<WebhookDeliveryLogOrmEntity>,
     private readonly httpService: HttpService,
+    @Inject(forwardRef(() => LEAD_REPOSITORY))
+    private readonly leadRepository: ILeadRepository,
   ) {}
 
   /**
@@ -48,6 +51,7 @@ export class WebhookDispatcherService {
     config: WebhookConfigOrmEntity,
     leads: (Lead | LeadOrmEntity)[],
     syncLogId?: string,
+    leadActionsById?: Record<string, 'CREATED' | 'UPDATED'>,
   ): Promise<DispatchResult> {
     if (!config || !config.isEnabled || !config.url || config.url.trim().length === 0) {
       this.logger.log('Webhook no configurado o deshabilitado. Omitiendo despacho.');
@@ -59,7 +63,10 @@ export class WebhookDispatcherService {
       return { sentCount: 0, successCount: 0, failedCount: 0 };
     }
 
-    const leadPayloads: WebhookLeadPayload[] = leads.map((lead) => WebhookLeadMapper.toPayload(lead));
+    const leadPayloads: WebhookLeadPayload[] = leads.map((lead) => {
+      const forcedAction = leadActionsById ? leadActionsById[lead.id] : undefined;
+      return WebhookLeadMapper.toPayload(lead, forcedAction);
+    });
     const format: WebhookDeliveryFormat = config.deliveryFormat || 'INDIVIDUAL';
 
     this.logger.log(
@@ -82,7 +89,7 @@ export class WebhookDispatcherService {
           retryAttempts: config.retryAttempts,
         });
 
-        await this.recordDeliveryLog({
+        const savedLog = await this.recordDeliveryLog({
           syncLogId,
           url: config.url,
           deliveryFormat: 'INDIVIDUAL',
@@ -94,6 +101,30 @@ export class WebhookDispatcherService {
           responseBody: res.responseBody,
           errorMessage: res.errorMessage,
           attempts: res.attempts,
+          dispatchedLeadIds: [singleLead.id],
+          dispatchedLeadsSummary: [
+            {
+              id: singleLead.id,
+              source: singleLead.source,
+              sourceLeadId: singleLead.sourceLeadId,
+              fullName: singleLead.fullName,
+              cedula: singleLead.cedula,
+              phone: singleLead.phone,
+              email: singleLead.email,
+              formName: singleLead.formName,
+              action: singleLead.action,
+              eventType: singleLead.eventType,
+            },
+          ],
+        });
+
+        // Registrar en BD el estado y la estructura exacta enviada
+        await this.leadRepository.markWebhookDispatched({
+          leadIds: [singleLead.id],
+          status: res.success ? 'SENT' : 'FAILED',
+          webhookLogId: savedLog?.id,
+          error: res.errorMessage,
+          payloadsByLeadId: res.success ? { [singleLead.id]: singleLead as any } : undefined,
         });
 
         if (res.success) {
@@ -124,7 +155,26 @@ export class WebhookDispatcherService {
         retryAttempts: config.retryAttempts,
       });
 
-      await this.recordDeliveryLog({
+      const dispatchedLeadIds = leadPayloads.map((l) => l.id);
+      const dispatchedLeadsSummary = leadPayloads.map((l) => ({
+        id: l.id,
+        source: l.source,
+        sourceLeadId: l.sourceLeadId,
+        fullName: l.fullName,
+        cedula: l.cedula,
+        phone: l.phone,
+        email: l.email,
+        formName: l.formName,
+        action: l.action,
+        eventType: l.eventType,
+      }));
+
+      const payloadsByLeadId: Record<string, Record<string, any>> = {};
+      for (const p of leadPayloads) {
+        payloadsByLeadId[p.id] = p as any;
+      }
+
+      const savedLog = await this.recordDeliveryLog({
         syncLogId,
         url: config.url,
         deliveryFormat: format,
@@ -132,16 +182,27 @@ export class WebhookDispatcherService {
         httpStatus: res.httpStatus,
         durationMs: res.durationMs,
         status: res.success ? 'SUCCESS' : 'FAILED',
-        requestPayload: Array.isArray(payloadToSend) ? payloadToSend.slice(0, 5) : payloadToSend,
+        requestPayload: payloadToSend, // Registro de la estructura COMPLETA sin recortes
         responseBody: res.responseBody,
         errorMessage: res.errorMessage,
         attempts: res.attempts,
+        dispatchedLeadIds,
+        dispatchedLeadsSummary,
+      });
+
+      // Actualizar en cada lead el estado y el snapshot exacto de lo enviado
+      await this.leadRepository.markWebhookDispatched({
+        leadIds: dispatchedLeadIds,
+        status: res.success ? 'SENT' : 'FAILED',
+        webhookLogId: savedLog?.id,
+        error: res.errorMessage,
+        payloadsByLeadId: res.success ? payloadsByLeadId : undefined,
       });
 
       if (res.success) {
-        successCount++;
+        successCount += leadPayloads.length;
       } else {
-        failedCount++;
+        failedCount += leadPayloads.length;
       }
     }
 
@@ -159,6 +220,8 @@ export class WebhookDispatcherService {
     deliveryFormat?: WebhookDeliveryFormat;
   }): Promise<WebhookSendResult & { payload: any }> {
     const sampleLead: WebhookLeadPayload = {
+      action: 'CREATED',
+      eventType: 'lead.created',
       id: '97685098-9ed0-4c08-83dd-aa4dd65061d0',
       source: 'META',
       sourceLeadId: '1414493017527392',
@@ -367,7 +430,9 @@ export class WebhookDispatcherService {
     };
   }
 
-  private async recordDeliveryLog(data: Partial<WebhookDeliveryLogOrmEntity>): Promise<void> {
+  private async recordDeliveryLog(
+    data: Partial<WebhookDeliveryLogOrmEntity>,
+  ): Promise<WebhookDeliveryLogOrmEntity | null> {
     try {
       const log = this.deliveryLogRepo.create({
         syncLogId: data.syncLogId ?? null,
@@ -381,14 +446,18 @@ export class WebhookDispatcherService {
         responseBody: data.responseBody ?? null,
         errorMessage: data.errorMessage ?? null,
         attempts: data.attempts ?? 1,
+        dispatchedLeadIds: data.dispatchedLeadIds ?? null,
+        dispatchedLeadsSummary: data.dispatchedLeadsSummary ?? null,
       });
 
       const saved = await this.deliveryLogRepo.save(log);
       this.logger.log(
-        `[Webhook Log Persistido] ID: ${saved.id} | Formato: ${saved.deliveryFormat} | Status: ${saved.status} | HTTP: ${saved.httpStatus} | Duración: ${saved.durationMs}ms | Respuesta Servidor: ${saved.responseBody || '(vacía)'}`,
+        `[Webhook Log Persistido] ID: ${saved.id} | Formato: ${saved.deliveryFormat} | Status: ${saved.status} | HTTP: ${saved.httpStatus} | Leads: ${saved.leadsCount} | Duración: ${saved.durationMs}ms`,
       );
+      return saved;
     } catch (saveErr: any) {
       this.logger.warn(`No se pudo persistir log de webhook: ${saveErr?.message || saveErr}`);
+      return null;
     }
   }
 }

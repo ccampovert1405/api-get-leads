@@ -29,6 +29,11 @@ export class Lead {
     public readonly canton: { id: number; nombre: string } | null = null,
     public readonly provincia: { id: number; nombre: string } | null = null,
     public readonly dependencia: { id: string; nombre: string; codigo?: string | null } | null = null,
+    public readonly webhookStatus: 'PENDING' | 'SENT' | 'FAILED' = 'PENDING',
+    public readonly webhookSentAt: Date | null = null,
+    public readonly webhookError: string | null = null,
+    public readonly lastWebhookLogId: string | null = null,
+    public readonly lastWebhookPayload: Record<string, unknown> | null = null,
   ) {
     this.campaignId = sourceCampaignId;
   }
