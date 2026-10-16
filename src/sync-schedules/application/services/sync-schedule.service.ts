@@ -269,7 +269,10 @@ export class SyncScheduleService implements OnApplicationBootstrap {
     let tiktokCampaignsCount = 0;
     let tiktokLeadsCount = 0;
     const allProcessedLeadIds: string[] = [];
+    const leadActionsById: Record<string, 'CREATED' | 'UPDATED'> = {};
     const errors: string[] = [];
+    let metaLeadsStats = { fetched: 0, inserted: 0, updated: 0, skipped: 0 };
+    let tiktokLeadsStats = { fetched: 0, inserted: 0, updated: 0, skipped: 0 };
 
     try {
       // 1. Sincronizar Meta Ads (Campañas y Leads)
@@ -283,11 +286,26 @@ export class SyncScheduleService implements OnApplicationBootstrap {
           if (schedule.syncLeads) {
             this.logger.log('Sincronizando leads de Meta Ads de todas las campañas...');
             const metaLeadsResult = await this.syncMetaLeadsUseCase.execute({});
-            metaLeadsCount = metaLeadsResult.leadsSaved;
-            if (metaLeadsResult.processedLeadIds && metaLeadsResult.processedLeadIds.length > 0) {
-              allProcessedLeadIds.push(...metaLeadsResult.processedLeadIds);
+            metaLeadsCount = metaLeadsResult.insertedCount + metaLeadsResult.updatedCount;
+            metaLeadsStats = {
+              fetched: metaLeadsResult.leadsFetched,
+              inserted: metaLeadsResult.insertedCount,
+              updated: metaLeadsResult.updatedCount,
+              skipped: metaLeadsResult.skippedCount,
+            };
+
+            for (const id of metaLeadsResult.insertedIds) {
+              allProcessedLeadIds.push(id);
+              leadActionsById[id] = 'CREATED';
             }
-            this.logger.log(`Leads de Meta Ads guardados: ${metaLeadsCount} (${metaLeadsResult.processedLeadIds.length} procesados en lote)`);
+            for (const id of metaLeadsResult.updatedIds) {
+              allProcessedLeadIds.push(id);
+              leadActionsById[id] = 'UPDATED';
+            }
+
+            this.logger.log(
+              `Leads Meta Ads: ${metaLeadsResult.insertedCount} nuevos, ${metaLeadsResult.updatedCount} actualizados, ${metaLeadsResult.skippedCount} omitidos (sin cambios). Total en cola webhook: ${allProcessedLeadIds.length}`,
+            );
           }
         } catch (err: any) {
           const errMsg = `Error en Meta Ads: ${err?.message || err}`;
@@ -323,10 +341,25 @@ export class SyncScheduleService implements OnApplicationBootstrap {
                   endDate,
                 });
                 tiktokLeadsCount = ttLeadsResult.inserted + ttLeadsResult.updated;
-                if (ttLeadsResult.processedLeadIds && ttLeadsResult.processedLeadIds.length > 0) {
-                  allProcessedLeadIds.push(...ttLeadsResult.processedLeadIds);
+                tiktokLeadsStats = {
+                  fetched: ttLeadsResult.fetched,
+                  inserted: ttLeadsResult.inserted,
+                  updated: ttLeadsResult.updated,
+                  skipped: ttLeadsResult.skipped,
+                };
+
+                for (const id of ttLeadsResult.insertedIds) {
+                  allProcessedLeadIds.push(id);
+                  leadActionsById[id] = 'CREATED';
                 }
-                this.logger.log(`Leads de TikTok Ads procesados: ${tiktokLeadsCount} (${ttLeadsResult.inserted} nuevos)`);
+                for (const id of ttLeadsResult.updatedIds) {
+                  allProcessedLeadIds.push(id);
+                  leadActionsById[id] = 'UPDATED';
+                }
+
+                this.logger.log(
+                  `Leads TikTok Ads: ${ttLeadsResult.inserted} nuevos, ${ttLeadsResult.updated} actualizados, ${ttLeadsResult.skipped} omitidos.`,
+                );
               } else {
                 this.logger.log('TikTok advertiserId o pageId no configurados completamente para descarga automática de leads en crontab.');
               }
@@ -355,7 +388,9 @@ export class SyncScheduleService implements OnApplicationBootstrap {
         syncMeta: schedule.syncMeta,
         syncTikTok: schedule.syncTikTok,
         syncLeads: schedule.syncLeads,
-        totalLeadsProcessed: allProcessedLeadIds.length,
+        metaLeadsStats,
+        tiktokLeadsStats,
+        totalLeadsDispatchedToWebhook: allProcessedLeadIds.length,
         errors: errors.length > 0 ? errors : undefined,
       };
       savedLog.errorMessage = errors.length > 0 ? errors.join('; ') : null;
@@ -367,20 +402,25 @@ export class SyncScheduleService implements OnApplicationBootstrap {
       schedule.lastRunMessage =
         errors.length > 0
           ? `Parcialmente completado con advertencias: ${errors.join('; ')}`
-          : `Éxito: ${metaCampaignsCount} camp. Meta, ${metaLeadsCount} leads Meta, ${tiktokCampaignsCount} camp. TikTok, ${tiktokLeadsCount} leads TikTok`;
+          : `Éxito: ${metaCampaignsCount} camp. Meta, ${metaLeadsCount} leads Meta (${metaLeadsStats.inserted} nuevos, ${metaLeadsStats.updated} act.), ${tiktokCampaignsCount} camp. TikTok, ${tiktokLeadsCount} leads TikTok`;
       await this.scheduleRepository.save(schedule);
 
-      // 3. Disparo Asíncrono del Webhook Saliente configurado por el cliente
+      // 3. Disparo Asíncrono del Webhook Saliente para leads nuevos o actualizados
       try {
         const webhookConfig = await this.webhookConfigService.getConfig();
         if (webhookConfig && webhookConfig.isEnabled && webhookConfig.url) {
           const uniqueLeadIds = Array.from(new Set(allProcessedLeadIds));
           if (uniqueLeadIds.length > 0 || !webhookConfig.triggerOnlyWhenLeadsFound) {
-            this.logger.log(`Invocando webhook saliente (${webhookConfig.deliveryFormat}) para ${uniqueLeadIds.length} leads procesados...`);
+            this.logger.log(`Invocando webhook saliente (${webhookConfig.deliveryFormat}) para ${uniqueLeadIds.length} leads calificados (nuevos o actualizados)...`);
             const leadsToSend = uniqueLeadIds.length > 0
               ? await this.leadRepository.findByIds(uniqueLeadIds)
               : [];
-            await this.webhookDispatcherService.dispatchLeads(webhookConfig, leadsToSend, savedLog.id);
+            await this.webhookDispatcherService.dispatchLeads(
+              webhookConfig,
+              leadsToSend,
+              savedLog.id,
+              leadActionsById,
+            );
           }
         }
       } catch (webhookErr: any) {

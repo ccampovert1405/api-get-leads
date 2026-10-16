@@ -24,6 +24,11 @@ export class LeadMapper {
     orm.idProvincia = domain.idProvincia;
     orm.idDependencia = domain.idDependencia;
     orm.lastSubmissionAt = domain.lastSubmissionAt;
+    orm.webhookStatus = domain.webhookStatus ?? 'PENDING';
+    orm.webhookSentAt = domain.webhookSentAt ?? null;
+    orm.webhookError = domain.webhookError ?? null;
+    orm.lastWebhookLogId = domain.lastWebhookLogId ?? null;
+    orm.lastWebhookPayload = (domain.lastWebhookPayload as Record<string, any>) ?? null;
     return orm;
   }
 
@@ -57,6 +62,11 @@ export class LeadMapper {
             codigo: orm.dependencia.codigo,
           }
         : null,
+      orm.webhookStatus ?? 'PENDING',
+      orm.webhookSentAt ?? null,
+      orm.webhookError ?? null,
+      orm.lastWebhookLogId ?? null,
+      orm.lastWebhookPayload ?? null,
     );
   }
 }

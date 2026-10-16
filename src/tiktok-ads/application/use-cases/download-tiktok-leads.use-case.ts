@@ -26,6 +26,8 @@ export interface DownloadLeadsResult {
   updated: number;
   skipped: number;
   processedLeadIds: string[];
+  insertedIds: string[];
+  updatedIds: string[];
 }
 
 @Injectable()
@@ -79,9 +81,9 @@ export class DownloadTikTokLeadsUseCase {
       );
     }
 
-    const { inserted, updated, savedIds } = await this.leadRepository.saveMany(leads);
+    const { inserted, updated, skipped, savedIds, insertedIds, updatedIds } = await this.leadRepository.saveMany(leads);
     this.logger.log(
-      `Leads TikTok persistidos: ${inserted} nuevos, ${updated} actualizados (deduplicados por cédula/id).`,
+      `Leads TikTok persistidos: ${inserted} nuevos, ${updated} actualizados, ${skipped} omitidos (sin cambios).`,
     );
 
     return {
@@ -89,8 +91,10 @@ export class DownloadTikTokLeadsUseCase {
       fetched: rows.length,
       inserted,
       updated,
-      skipped: rows.length - (inserted + updated),
+      skipped,
       processedLeadIds: savedIds || [],
+      insertedIds: insertedIds || [],
+      updatedIds: updatedIds || [],
     };
   }
 

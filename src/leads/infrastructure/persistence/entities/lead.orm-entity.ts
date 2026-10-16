@@ -89,6 +89,22 @@ export class LeadOrmEntity {
   @Column({ name: 'last_submission_at', type: 'timestamptz', nullable: true })
   lastSubmissionAt: Date | null;
 
+  @Index('IDX_LEADS_WEBHOOK_STATUS')
+  @Column({ name: 'webhook_status', type: 'varchar', length: 20, default: 'PENDING' })
+  webhookStatus: 'PENDING' | 'SENT' | 'FAILED';
+
+  @Column({ name: 'webhook_sent_at', type: 'timestamptz', nullable: true })
+  webhookSentAt: Date | null;
+
+  @Column({ name: 'webhook_error', type: 'text', nullable: true })
+  webhookError: string | null;
+
+  @Column({ name: 'last_webhook_log_id', type: 'uuid', nullable: true })
+  lastWebhookLogId: string | null;
+
+  @Column({ name: 'last_webhook_payload', type: 'jsonb', nullable: true })
+  lastWebhookPayload: Record<string, any> | null;
+
   @CreateDateColumn({ name: 'created_at' })
   createdAt: Date;
 }
