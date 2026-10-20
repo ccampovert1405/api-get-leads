@@ -69,7 +69,7 @@ export class SyncMetaLeadsUseCase {
           for (const row of rawLeads) {
             if (!seenLeadIds.has(row.sourceLeadId)) {
               seenLeadIds.add(row.sourceLeadId);
-              const geo = await this.resolveGeoAndDependencia(row.ciudadDeclarada);
+              const geo = await this.resolveGeoAndDependencia(row.ciudadDeclarada ?? row.formName);
               allLeads.push(
                 new Lead(
                   '', // id generado por BD
@@ -85,7 +85,7 @@ export class SyncMetaLeadsUseCase {
                   new Date(),
                   row.cedula ?? null,
                   1,
-                  row.ciudadDeclarada ?? null,
+                  geo.ciudadDeclarada ?? row.ciudadDeclarada ?? null,
                   row.contactPreference ?? null,
                   geo.idCanton,
                   geo.idProvincia,
@@ -107,7 +107,7 @@ export class SyncMetaLeadsUseCase {
       for (const row of formsLeads) {
         if (!seenLeadIds.has(row.sourceLeadId)) {
           seenLeadIds.add(row.sourceLeadId);
-          const geo = await this.resolveGeoAndDependencia(row.ciudadDeclarada);
+          const geo = await this.resolveGeoAndDependencia(row.ciudadDeclarada ?? row.formName);
           allLeads.push(
             new Lead(
               '', // id generado por BD
@@ -123,7 +123,7 @@ export class SyncMetaLeadsUseCase {
               new Date(),
               row.cedula ?? null,
               1,
-              row.ciudadDeclarada ?? null,
+              geo.ciudadDeclarada ?? row.ciudadDeclarada ?? null,
               row.contactPreference ?? null,
               geo.idCanton,
               geo.idProvincia,
@@ -177,9 +177,10 @@ export class SyncMetaLeadsUseCase {
     idCanton: number | null;
     idProvincia: number | null;
     idDependencia: string | null;
+    ciudadDeclarada: string | null;
   }> {
     if (!ciudadDeclarada) {
-      return { idCanton: null, idProvincia: null, idDependencia: null };
+      return { idCanton: null, idProvincia: null, idDependencia: null, ciudadDeclarada: null };
     }
 
     const geo = await this.geoResolver.resolveLocation(ciudadDeclarada);
@@ -198,6 +199,7 @@ export class SyncMetaLeadsUseCase {
       idCanton: geo.cantonId,
       idProvincia: geo.provinciaId,
       idDependencia,
+      ciudadDeclarada: geo.ciudadDeclarada ?? null,
     };
   }
 }
