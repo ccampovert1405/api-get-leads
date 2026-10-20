@@ -56,7 +56,7 @@ export class DownloadTikTokLeadsUseCase {
 
     const leads: Lead[] = [];
     for (const row of rows) {
-      const geo = await this.resolveGeoAndDependencia(row.ciudadDeclarada);
+      const geo = await this.resolveGeoAndDependencia(row.ciudadDeclarada ?? row.formName);
       leads.push(
         new Lead(
           '', // id lo genera la base de datos
@@ -72,7 +72,7 @@ export class DownloadTikTokLeadsUseCase {
           new Date(),
           row.cedula ?? null,
           1,
-          row.ciudadDeclarada ?? null,
+          geo.ciudadDeclarada ?? row.ciudadDeclarada ?? null,
           row.contactPreference ?? null,
           geo.idCanton,
           geo.idProvincia,
@@ -102,9 +102,10 @@ export class DownloadTikTokLeadsUseCase {
     idCanton: number | null;
     idProvincia: number | null;
     idDependencia: string | null;
+    ciudadDeclarada: string | null;
   }> {
     if (!ciudadDeclarada) {
-      return { idCanton: null, idProvincia: null, idDependencia: null };
+      return { idCanton: null, idProvincia: null, idDependencia: null, ciudadDeclarada: null };
     }
 
     const geo = await this.geoResolver.resolveLocation(ciudadDeclarada);
@@ -122,6 +123,7 @@ export class DownloadTikTokLeadsUseCase {
       idCanton: geo.cantonId,
       idProvincia: geo.provinciaId,
       idDependencia,
+      ciudadDeclarada: geo.ciudadDeclarada ?? null,
     };
   }
 

@@ -57,12 +57,19 @@ export class WebhookLeadMapper {
 
     const cedula = lead.cedula ?? null;
     const submissionCount = lead.submissionCount ?? 1;
-    const rawCiudad = lead.ciudadDeclarada ?? null;
+    const rawCiudad =
+      lead.ciudadDeclarada ??
+      (lead.provincia as any)?.provincia ??
+      (lead.provincia as any)?.nombre ??
+      (lead.canton as any)?.canton ??
+      (lead.canton as any)?.nombre ??
+      null;
     const ciudadDeclarada = rawCiudad
-      ? rawCiudad
-          .replace(/_/g, ' ')
+      ? String(rawCiudad)
           .normalize('NFD')
           .replace(/[\u0300-\u036f]/g, '')
+          .toLowerCase()
+          .replace(/[^a-z0-9\s]/g, '')
           .trim()
           .replace(/\s+/g, ' ')
       : null;

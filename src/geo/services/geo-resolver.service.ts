@@ -9,6 +9,7 @@ export interface ResolvedLocation {
   provinciaId: number | null;
   cantonNombre: string | null;
   provinciaNombre: string | null;
+  ciudadDeclarada: string | null;
 }
 
 @Injectable()
@@ -54,12 +55,13 @@ export class GeoResolverService implements OnModuleInit {
   }
 
   /**
-   * Resuelve el cantón y provincia a partir del texto ingresado por el prospecto
-   * (ej. 'cotopaxi', 'latacunga', 'quito', 'guayaquil', etc.)
+   * Resuelve la provincia y cantón a partir del texto ingresado por el prospecto
+   * Prioriza coincidencia contra tbl_provincia y retorna el nombre de provincia normalizado
+   * (sin caracteres especiales y en minúsculas) para ciudadDeclarada.
    */
   async resolveLocation(input: string | null | undefined): Promise<ResolvedLocation> {
     if (!input || typeof input !== 'string') {
-      return { cantonId: null, provinciaId: null, cantonNombre: null, provinciaNombre: null };
+      return { cantonId: null, provinciaId: null, cantonNombre: null, provinciaNombre: null, ciudadDeclarada: null };
     }
 
     if (this.provincias.length === 0 || this.cantones.length === 0) {
@@ -68,30 +70,10 @@ export class GeoResolverService implements OnModuleInit {
 
     const cleanInput = this.normalizeText(input);
     if (!cleanInput) {
-      return { cantonId: null, provinciaId: null, cantonNombre: null, provinciaNombre: null };
+      return { cantonId: null, provinciaId: null, cantonNombre: null, provinciaNombre: null, ciudadDeclarada: null };
     }
 
-    // 1. Intentar coincidencia exacta o contenida con Cantón
-    // Primero coincidencia exacta
-    let matchedCanton = this.cantones.find((c) => c.normalized === cleanInput);
-    if (!matchedCanton) {
-      // Buscar si el texto del input contiene el nombre del cantón o viceversa
-      matchedCanton = this.cantones.find(
-        (c) => cleanInput.includes(c.normalized) || (c.normalized.length >= 4 && c.normalized.includes(cleanInput)),
-      );
-    }
-
-    if (matchedCanton) {
-      const prov = this.provincias.find((p) => p.id === matchedCanton!.idProvincia);
-      return {
-        cantonId: matchedCanton.id,
-        provinciaId: matchedCanton.idProvincia,
-        cantonNombre: matchedCanton.name,
-        provinciaNombre: prov?.name ?? null,
-      };
-    }
-
-    // 2. Intentar coincidencia con Provincia
+    // 1. Prioridad: Buscar coincidencia en tbl_provincia (exacta o tipo LIKE contenida)
     let matchedProv = this.provincias.find((p) => p.normalized === cleanInput);
     if (!matchedProv) {
       matchedProv = this.provincias.find(
@@ -105,6 +87,26 @@ export class GeoResolverService implements OnModuleInit {
         provinciaId: matchedProv.id,
         cantonNombre: null,
         provinciaNombre: matchedProv.name,
+        ciudadDeclarada: matchedProv.normalized, // Nombre de la provincia en minúsculas y sin acentos
+      };
+    }
+
+    // 2. Fallback: Buscar coincidencia en tbl_canton si ingresaron un cantón
+    let matchedCanton = this.cantones.find((c) => c.normalized === cleanInput);
+    if (!matchedCanton) {
+      matchedCanton = this.cantones.find(
+        (c) => cleanInput.includes(c.normalized) || (c.normalized.length >= 4 && c.normalized.includes(cleanInput)),
+      );
+    }
+
+    if (matchedCanton) {
+      const prov = this.provincias.find((p) => p.id === matchedCanton!.idProvincia);
+      return {
+        cantonId: matchedCanton.id,
+        provinciaId: matchedCanton.idProvincia,
+        cantonNombre: matchedCanton.name,
+        provinciaNombre: prov?.name ?? null,
+        ciudadDeclarada: prov ? prov.normalized : matchedCanton.normalized,
       };
     }
 
@@ -113,6 +115,7 @@ export class GeoResolverService implements OnModuleInit {
       provinciaId: null,
       cantonNombre: null,
       provinciaNombre: null,
+      ciudadDeclarada: cleanInput,
     };
   }
 
@@ -121,6 +124,8 @@ export class GeoResolverService implements OnModuleInit {
       .normalize('NFD')
       .replace(/[\u0300-\u036f]/g, '')
       .toLowerCase()
-      .trim();
+      .replace(/[^a-z0-9\s]/g, '')
+      .trim()
+      .replace(/\s+/g, ' ');
   }
 }
